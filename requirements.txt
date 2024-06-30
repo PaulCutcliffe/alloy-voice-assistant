@@ -7,4 +7,6 @@ python-dotenv
 pyaudio
 soundfile
 SpeechRecognition
+pillow==10.0.0
+pyautogui==0.9.54
 git+https://github.com/openai/whisper.git
