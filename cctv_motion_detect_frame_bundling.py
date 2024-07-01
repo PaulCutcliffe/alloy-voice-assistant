@@ -1,8 +1,9 @@
 import base64
-from threading import Lock, Thread, Event
+from threading import Lock, Thread
 import time
 from datetime import datetime, timedelta
 import locale
+from collections import deque
 import os
 
 import cv2
@@ -18,7 +19,6 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pyaudio import PyAudio, paInt16
-import textwrap
 
 load_dotenv()
 
@@ -26,27 +26,20 @@ load_dotenv()
 locale.setlocale(locale.LC_TIME, 'en_GB.UTF-8')
 
 class WebcamStream:
-    def __init__(self):
+    def __init__(self, buffer_size=10):
         self.stream = VideoCapture(index=0)
         _, self.frame = self.stream.read()
         self.running = False
         self.lock = Lock()
         self.previous_frame = None
-        self.paused = False
-        self.pause_event = Event()
-
-    def pause(self):
-        self.paused = True
-        self.pause_event.set()
-
-    def resume(self):
-        self.paused = False
-        self.pause_event.clear()
+        self.frame_buffer = deque(maxlen=buffer_size)
 
     def start(self):
         if self.running:
             return self
+
         self.running = True
+
         self.thread = Thread(target=self.update, args=())
         self.thread.start()
         return self
@@ -54,21 +47,20 @@ class WebcamStream:
     def update(self):
         while self.running:
             _, frame = self.stream.read()
+
             self.lock.acquire()
             self.frame = frame
             self.lock.release()
 
     def read(self, encode=False):
-        if self.paused:
-            self.pause_event.wait()
-
         self.lock.acquire()
         frame = self.frame.copy()
         self.lock.release()
+
         if encode:
             _, buffer = imencode(".jpeg", frame)
             return base64.b64encode(buffer)
-        
+
         return frame
 
     def stop(self):
@@ -82,6 +74,8 @@ class WebcamStream:
     def detect_motion(self, threshold=1000):
         current_frame = cv2.cvtColor(self.read(), cv2.COLOR_BGR2GRAY)
         current_frame = cv2.GaussianBlur(current_frame, (21, 21), 0)
+        
+        self.frame_buffer.append(self.read())
         
         if self.previous_frame is None:
             self.previous_frame = current_frame
@@ -100,8 +94,11 @@ class WebcamStream:
 
         self.previous_frame = current_frame
         return significant_motion
-    
-class TimestampedMotionCommentaryAssistant:
+
+    def get_frame_bundle(self):
+        return list(self.frame_buffer)
+
+class EnhancedMotionCommentaryAssistant:
     def __init__(self, model, time_interval=5):
         self.model = model
         self.chain = self._create_inference_chain()
@@ -109,9 +106,8 @@ class TimestampedMotionCommentaryAssistant:
         self.last_time_mention = datetime.now() - timedelta(minutes=time_interval)
         self.time_interval = timedelta(minutes=time_interval)
         self.session_start = True
-        self.current_commentary = ""
 
-    def generate_commentary(self, image):
+    def generate_commentary(self, frame_bundle):
         current_time = datetime.now()
         
         if self.session_start:
@@ -128,11 +124,12 @@ class TimestampedMotionCommentaryAssistant:
         else:
             time_mention = ""
 
-        prompt = f"{intro}{time_mention}Describe what you see in this image, focusing on any changes or movements."
+        encoded_frames = [base64.b64encode(cv2.imencode('.jpg', frame)[1]).decode() for frame in frame_bundle]
+        prompt = f"{intro}{time_mention}Analyze the sequence of images and describe any changes, movements, or activities you observe."
         
         try:
             response = self.chain.invoke(
-                {"prompt": prompt, "image_base64": image.decode()},
+                {"prompt": prompt, "images": encoded_frames},
                 config={"configurable": {"session_id": "unused"}},
             )
             if isinstance(response, str):
@@ -145,7 +142,6 @@ class TimestampedMotionCommentaryAssistant:
 
         full_response = f"{intro}{time_mention}{response}"
         print("Commentary:", full_response)
-        self.current_commentary = full_response  # Store the current commentary
         self._tts(full_response)
         self.last_commentary_time = current_time
 
@@ -166,25 +162,21 @@ class TimestampedMotionCommentaryAssistant:
             player.stop_stream()
             player.close()
 
-
     def _create_inference_chain(self):
         SYSTEM_PROMPT = """
         You are an observant AI assistant tasked with providing commentary 
-        of a CCTV or webcam feed whenever motion is detected. Describe what you see 
-        in each image, focusing on:
+        of a CCTV or webcam feed when motion is detected. You will be given a 
+        sequence of images to analyze. Describe what you see, focusing on:
         
-        1. The nature and extent of the detected movement.
-        2. Notable objects, people, or activities involved in the motion.
-        3. Any potential security concerns or unusual activities.
+        1. The nature and extent of the detected movement or activity.
+        2. How the scene changes across the image sequence.
+        3. Notable objects, people, or activities involved.
+        4. Any potential security concerns or unusual activities.
 
-        If something is the same as in previous images, there is no need to mention it - only mention things that have changed or are new!
-
-        Keep your answers very short, giving just one or two details in a sentence. 
-        The sooner you finish your response, the sooner the next image will be shown, 
-        so try to be as quick and concise as possible. Don't use emoticons or emojis.
+        Keep your descriptions concise but informative. Don't use emoticons or emojis.
         Avoid speculation and stick to what you can actually observe.
-        The date and time will be provided to you as required - please include them in your commentary. 
-        Do not generate timestamps yourself. Thanks. 
+        The date and time will be provided to you when necessary. Do not generate
+        or mention timestamps yourself.
         """
 
         prompt_template = ChatPromptTemplate.from_messages(
@@ -195,10 +187,7 @@ class TimestampedMotionCommentaryAssistant:
                     "human",
                     [
                         {"type": "text", "text": "{prompt}"},
-                        {
-                            "type": "image_url",
-                            "image_url": "data:image/jpeg;base64,{image_base64}",
-                        },
+                        *[{"type": "image_url", "image_url": f"data:image/jpeg;base64,{{image}}"} for _ in range(10)],
                     ],
                 ),
             ]
@@ -213,67 +202,24 @@ class TimestampedMotionCommentaryAssistant:
             input_messages_key="prompt",
             history_messages_key="chat_history",
         )
-    
-def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=0.7, font_color=(255, 255, 255), bg_color=(0, 0, 0), line_type=2):
-    # Calculate the width and height of the frame
-    frame_h, frame_w = frame.shape[:2]
-    
-    # Wrap the text to fit within the frame width
-    wrapped_text = textwrap.wrap(text, width=int(frame_w / (font_scale * 20)))
-    
-    # Calculate the total height of the text block
-    text_height = len(wrapped_text) * 30
-    
-    # Create a semi-transparent background for the subtitle
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, frame_h - text_height - 10), (frame_w, frame_h), bg_color, -1)
-    
-    # Apply the overlay
-    alpha = 0.6
-    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-    
-    # Add each line of text
-    for i, line in enumerate(wrapped_text):
-        text_size, _ = cv2.getTextSize(line, font, font_scale, line_type)
-        text_w, text_h = text_size
-        text_x = (frame_w - text_w) // 2
-        text_y = frame_h - text_height + (i + 1) * 30
-        cv2.putText(frame, line, (text_x, text_y), font, font_scale, font_color, line_type)
-    
-    return frame
 
-# Initialize the webcam stream
-webcam_stream = WebcamStream().start()
+webcam_stream = WebcamStream(buffer_size=10).start()
 
 # model = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest")
 # Uncomment the following line to use OpenAI's GPT-4 instead:
 model = ChatOpenAI(model=os.getenv("OPENAI_MODEL"))
 
-assistant = TimestampedMotionCommentaryAssistant(model, time_interval=5)
+assistant = EnhancedMotionCommentaryAssistant(model, time_interval=5)
 
 try:
     while True:
-        if not webcam_stream.paused:
-            frame = webcam_stream.read()
-        else:
-            frame = analyzed_frame.copy()  # Use the stored analyzed frame when paused
-        
-        # Add subtitle to the frame
-        frame_with_subtitle = add_subtitle_to_frame(frame, assistant.current_commentary)
-        cv2.imshow("CCTV Feed", frame_with_subtitle)
+        frame = webcam_stream.read()
+        cv2.imshow("CCTV Feed", frame)
 
-        if webcam_stream.detect_motion() and not webcam_stream.paused:
+        if webcam_stream.detect_motion():
             print("Motion detected!")
-            webcam_stream.pause()
-            analyzed_frame = webcam_stream.read()
-            encoded_image = webcam_stream.read(encode=True)
-            
-            # Display the analyzed frame
-            cv2.imshow("CCTV Feed", analyzed_frame)
-            cv2.waitKey(1)  # Update the display
-
-            assistant.generate_commentary(encoded_image)
-            webcam_stream.resume()
+            frame_bundle = webcam_stream.get_frame_bundle()
+            assistant.generate_commentary(frame_bundle)
 
         if cv2.waitKey(1) in [27, ord("q")]:
             break
