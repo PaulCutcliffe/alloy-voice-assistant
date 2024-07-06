@@ -11,7 +11,7 @@ import openai
 from cv2 import VideoCapture, imencode
 from dotenv import load_dotenv
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema.messages import SystemMessage
+from langchain.schema import HumanMessage, SystemMessage  # Add this line
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables.history import RunnableWithMessageHistory
@@ -19,6 +19,13 @@ from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pyaudio import PyAudio, paInt16
 import textwrap
+
+import torch
+from detectron2 import model_zoo
+from detectron2.engine import DefaultPredictor
+from detectron2.config import get_cfg
+from detectron2.utils.visualizer import Visualizer
+from detectron2.data import MetadataCatalog
 
 load_dotenv()
 
@@ -100,117 +107,7 @@ class WebcamStream:
 
         self.previous_frame = current_frame
         return significant_motion
-    
-class TimestampedMotionCommentaryAssistant:
-    def __init__(self, model, time_interval=5):
-        self.model = model
-        self.chain = self._create_inference_chain()
-        self.last_commentary_time = datetime.now()
-        self.last_time_mention = datetime.now() - timedelta(minutes=time_interval)
-        self.time_interval = timedelta(minutes=time_interval)
-        self.session_start = True
-        self.current_commentary = ""
 
-    def generate_commentary(self, image):
-        current_time = datetime.now()
-        
-        if self.session_start:
-            date_str = current_time.strftime("%A the %d of %B, %Y")
-            intro = f"Session starting on {date_str}. "
-            self.session_start = False
-        else:
-            intro = ""
-
-        if current_time - self.last_time_mention >= self.time_interval:
-            time_str = current_time.strftime("%H:%M")
-            time_mention = f"At {time_str}, "
-            self.last_time_mention = current_time
-        else:
-            time_mention = ""
-
-        prompt = f"{intro}{time_mention}Describe what you think has changed or moved in this image."
-        
-        try:
-            response = self.chain.invoke(
-                {"prompt": prompt, "image_base64": image.decode()},
-                config={"configurable": {"session_id": "unused"}},
-            )
-            if isinstance(response, str):
-                response = response.strip()
-            else:
-                response = str(response)
-        except Exception as e:
-            print(f"Error generating commentary: {e}")
-            response = "Unable to generate commentary at this time."
-
-        full_response = f"{intro}{time_mention}{response}"
-        print("Commentary:", full_response)
-        self.current_commentary = full_response  # Store the current commentary
-        self._tts(full_response)
-        self.last_commentary_time = current_time
-
-    def _tts(self, response):
-        player = PyAudio().open(format=paInt16, channels=1, rate=24000, output=True)
-        try:
-            with openai.audio.speech.with_streaming_response.create(
-                model="tts-1",
-                voice="alloy",
-                response_format="pcm",
-                input=response,
-            ) as stream:
-                for chunk in stream.iter_bytes(chunk_size=1024):
-                    player.write(chunk)
-        except KeyboardInterrupt:
-            print("Text-to-speech interrupted.")
-        finally:
-            player.stop_stream()
-            player.close()
-
-
-    def _create_inference_chain(self):
-        SYSTEM_PROMPT = """
-        You are an observant AI assistant tasked with providing short sentences describing what seems to 
-        have changed on a CCTV or webcam feed whenever motion is detected. If something looks the same as 
-        it did in previous images, there is no need to mention it - only mention things that have changed 
-        or are new! Please don't say things like "The background remains unchanged" or "There is no activity to report". 
-
-        Keep your answers very short, giving just one or two details in a sentence. The sooner you finish 
-        your response, the sooner the next image will be shown, so give only short, quick answers. 
-        
-        Don't use emoticons or emojis.
-        
-        The date and time will be provided to you as required - do not generate timestamps yourself. 
-        
-        Thanks. 
-        """
-
-        prompt_template = ChatPromptTemplate.from_messages(
-            [
-                SystemMessage(content=SYSTEM_PROMPT),
-                MessagesPlaceholder(variable_name="chat_history"),
-                (
-                    "human",
-                    [
-                        {"type": "text", "text": "{prompt}"},
-                        {
-                            "type": "image_url",
-                            "image_url": "data:image/jpeg;base64,{image_base64}",
-                        },
-                    ],
-                ),
-            ]
-        )
-
-        chain = prompt_template | self.model | StrOutputParser()
-
-        chat_message_history = ChatMessageHistory()
-        return RunnableWithMessageHistory(
-            chain,
-            lambda _: chat_message_history,
-            input_messages_key="prompt",
-            history_messages_key="chat_history",
-        )
-    
 def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=0.7, font_color=(255, 255, 255), bg_color=(0, 0, 0), line_type=2):
     # Calculate the width and height of the frame
     frame_h, frame_w = frame.shape[:2]
@@ -239,38 +136,122 @@ def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale
     
     return frame
 
-# Initialize the webcam stream
+class ObjectDetector:
+    def __init__(self):
+        cfg = get_cfg()
+        cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
+        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Set threshold for this model
+        cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+        self.predictor = DefaultPredictor(cfg)
+        self.metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
+
+    def detect_objects(self, image):
+        outputs = self.predictor(image)
+        return outputs
+
+    def visualize_detection(self, image, outputs):
+        v = Visualizer(image[:, :, ::-1], self.metadata, scale=1.2)
+        out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
+        return out.get_image()[:, :, ::-1]
+
+class EnhancedCommentaryAssistant:
+    def __init__(self, model, time_interval=5):
+        self.model = model
+        self.last_commentary_time = datetime.now()
+        self.last_time_mention = datetime.now() - timedelta(minutes=time_interval)
+        self.time_interval = timedelta(minutes=time_interval)
+        self.session_start = True
+        self.current_commentary = ""
+        self.SYSTEM_PROMPT = """
+        You are an observant AI assistant tasked with describing people's actions in CCTV footage.
+        Keep your descriptions concise, focusing on the most notable activities.
+        Avoid speculation and stick to what you can actually observe.
+        """
+
+    def generate_commentary(self, image, detected_objects):
+        current_time = datetime.now()
+        
+        if self.session_start:
+            date_str = current_time.strftime("%A the %d of %B, %Y")
+            intro = f"Session starting on {date_str}. "
+            self.session_start = False
+        else:
+            intro = ""
+
+        if current_time - self.last_time_mention >= self.time_interval:
+            time_str = current_time.strftime("%H:%M")
+            time_mention = f"At {time_str}, "
+            self.last_time_mention = current_time
+        else:
+            time_mention = ""
+
+        prompt = f"{intro}{time_mention}Describe what the detected people are doing in this image. Detected objects: {detected_objects}"
+        
+        try:
+            messages = [
+                SystemMessage(content=self.SYSTEM_PROMPT),
+                HumanMessage(content=[
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": f"data:image/jpeg;base64,{image}"}
+                ])
+            ]
+            response = self.model.invoke(messages)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+        except Exception as e:
+            print(f"Error generating commentary: {e}")
+            response_text = "Unable to generate commentary at this time."
+
+        full_response = f"{intro}{time_mention}{response_text}"
+        print("Commentary:", full_response)
+        self.current_commentary = full_response
+        self._tts(full_response)
+        self.last_commentary_time = current_time
+
+    def _tts(self, response):
+        player = PyAudio().open(format=paInt16, channels=1, rate=24000, output=True)
+        try:
+            with openai.audio.speech.with_streaming_response.create(
+                model="tts-1",
+                voice="alloy",
+                response_format="pcm",
+                input=response,
+            ) as stream:
+                for chunk in stream.iter_bytes(chunk_size=1024):
+                    player.write(chunk)
+        except KeyboardInterrupt:
+            print("Text-to-speech interrupted.")
+        finally:
+            player.stop_stream()
+            player.close()
+
+# Main script
 webcam_stream = WebcamStream().start()
-
-# model = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest")
-# Uncomment the following line to use OpenAI's GPT-4 instead:
-model = ChatOpenAI(model=os.getenv("OPENAI_MODEL"))
-
-assistant = TimestampedMotionCommentaryAssistant(model, time_interval=5)
+object_detector = ObjectDetector()
+model = ChatOpenAI(model="gpt-4o", max_tokens=300)
+assistant = EnhancedCommentaryAssistant(model, time_interval=5)
 
 try:
     while True:
-        if not webcam_stream.paused:
-            frame = webcam_stream.read()
-        else:
-            frame = analyzed_frame.copy()  # Use the stored analyzed frame when paused
+        frame = webcam_stream.read()
+        
+        # Perform object detection
+        outputs = object_detector.detect_objects(frame)
+        detected_objects = outputs["instances"].pred_classes.tolist()
+        
+        # Visualize detection results
+        frame_with_detection = object_detector.visualize_detection(frame, outputs)
+        
+        # Check if a person is detected (class 0 in COCO dataset)
+        if 0 in detected_objects:
+            print("Person detected!")
+            encoded_image = cv2.imencode('.jpg', frame)[1].tobytes()
+            assistant.generate_commentary(encoded_image, detected_objects)
         
         # Add subtitle to the frame
-        frame_with_subtitle = add_subtitle_to_frame(frame, assistant.current_commentary)
-        cv2.imshow("CCTV Feed", frame_with_subtitle)
-
-        if webcam_stream.detect_motion() and not webcam_stream.paused:
-            print("Motion detected!")
-            webcam_stream.pause()
-            analyzed_frame = webcam_stream.read()
-            encoded_image = webcam_stream.read(encode=True)
-            
-            # Display the analyzed frame
-            cv2.imshow("CCTV Feed", analyzed_frame)
-            cv2.waitKey(1)  # Update the display
-
-            assistant.generate_commentary(encoded_image)
-            webcam_stream.resume()
+        frame_with_subtitle = add_subtitle_to_frame(frame_with_detection, assistant.current_commentary)
+        
+        # Display the frame
+        cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
 
         if cv2.waitKey(1) in [27, ord("q")]:
             break

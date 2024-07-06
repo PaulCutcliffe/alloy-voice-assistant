@@ -125,7 +125,7 @@ class EnhancedMotionCommentaryAssistant:
             time_mention = ""
 
         encoded_frames = [base64.b64encode(cv2.imencode('.jpg', frame)[1]).decode() for frame in frame_bundle]
-        prompt = f"{intro}{time_mention}Analyze the sequence of images and describe any changes, movements, or activities you observe."
+        prompt = f"{intro}{time_mention}Analyse the sequence of images and describe any changes, movements or activities you observe."
         
         try:
             response = self.chain.invoke(
