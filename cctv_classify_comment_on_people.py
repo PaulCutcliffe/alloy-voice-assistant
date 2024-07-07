@@ -32,6 +32,9 @@ load_dotenv()
 # Set locale to British English
 locale.setlocale(locale.LC_TIME, 'en_GB.UTF-8')
 
+def ordinal(n):
+    return "%d%s" % (n, "th" if 4 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th"))
+
 class WebcamStream:
     def __init__(self):
         self.stream = VideoCapture(index=0)
@@ -109,6 +112,12 @@ class WebcamStream:
         return significant_motion
 
 def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=0.7, font_color=(255, 255, 255), bg_color=(0, 0, 0), line_type=2):
+    # Ensure frame is in the correct format
+    if isinstance(frame, np.ndarray):
+        frame = frame.copy()
+    else:
+        frame = np.array(frame)
+    
     # Calculate the width and height of the frame
     frame_h, frame_w = frame.shape[:2]
     
@@ -119,12 +128,11 @@ def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale
     text_height = len(wrapped_text) * 30
     
     # Create a semi-transparent background for the subtitle
-    overlay = frame.copy()
+    overlay = np.zeros((frame_h, frame_w, 3), dtype=np.uint8)
     cv2.rectangle(overlay, (0, frame_h - text_height - 10), (frame_w, frame_h), bg_color, -1)
     
     # Apply the overlay
-    alpha = 0.6
-    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+    cv2.addWeighted(overlay, 0.6, frame, 1, 0, frame)
     
     # Add each line of text
     for i, line in enumerate(wrapped_text):
@@ -142,6 +150,7 @@ class ObjectDetector:
         cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Set threshold for this model
         cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+        cfg.MODEL.DEVICE = 'cpu'  # Force CPU usage for object detection
         self.predictor = DefaultPredictor(cfg)
         self.metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
 
@@ -152,7 +161,7 @@ class ObjectDetector:
     def visualize_detection(self, image, outputs):
         v = Visualizer(image[:, :, ::-1], self.metadata, scale=1.2)
         out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
-        return out.get_image()[:, :, ::-1]
+        return np.array(out.get_image()[:, :, ::-1])
 
 class EnhancedCommentaryAssistant:
     def __init__(self, model, time_interval=5):
@@ -164,7 +173,7 @@ class EnhancedCommentaryAssistant:
         self.current_commentary = ""
         self.SYSTEM_PROMPT = """
         You are an observant AI assistant tasked with describing people's actions in CCTV footage.
-        Keep your descriptions concise, focusing on the most notable activities.
+        Keep your descriptions very short, focussing only on the most notable activity.
         Avoid speculation and stick to what you can actually observe.
         """
 
@@ -172,7 +181,7 @@ class EnhancedCommentaryAssistant:
         current_time = datetime.now()
         
         if self.session_start:
-            date_str = current_time.strftime("%A the %d of %B, %Y")
+            date_str = current_time.strftime(f"%A the {ordinal(current_time.day)} of %B, %Y")
             intro = f"Session starting on {date_str}. "
             self.session_start = False
         else:
@@ -185,14 +194,14 @@ class EnhancedCommentaryAssistant:
         else:
             time_mention = ""
 
-        prompt = f"{intro}{time_mention}Describe what the detected people are doing in this image. Detected objects: {detected_objects}"
+        prompt = f"{intro}{time_mention}Describe briefly what the detected people are doing in this image. Detected objects: {detected_objects}"
         
         try:
             messages = [
                 SystemMessage(content=self.SYSTEM_PROMPT),
                 HumanMessage(content=[
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": f"data:image/jpeg;base64,{image}"}
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image.decode('utf-8')}"}}
                 ])
             ]
             response = self.model.invoke(messages)
@@ -244,7 +253,7 @@ try:
         # Check if a person is detected (class 0 in COCO dataset)
         if 0 in detected_objects:
             print("Person detected!")
-            encoded_image = cv2.imencode('.jpg', frame)[1].tobytes()
+            encoded_image = base64.b64encode(cv2.imencode('.jpg', frame)[1])
             assistant.generate_commentary(encoded_image, detected_objects)
         
         # Add subtitle to the frame
