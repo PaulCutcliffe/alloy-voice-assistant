@@ -172,9 +172,9 @@ class EnhancedCommentaryAssistant:
         self.session_start = True
         self.current_commentary = ""
         self.SYSTEM_PROMPT = """
-        You are an observant AI assistant tasked with describing people's actions in CCTV footage.
-        Keep your descriptions very short, focussing only on the most notable activity.
-        Avoid speculation and stick to what you can actually observe.
+        You are an observant AI assistant tasked with describing people seen in the CCTV footage, 
+        their approximate age group and any actions they are engaged in. 
+        Keep your descriptions very short, focussing only on the people and what they're doing.
         """
 
     def generate_commentary(self, image, detected_objects):
@@ -217,21 +217,30 @@ class EnhancedCommentaryAssistant:
         self.last_commentary_time = current_time
 
     def _tts(self, response):
-        player = PyAudio().open(format=paInt16, channels=1, rate=24000, output=True)
         try:
-            with openai.audio.speech.with_streaming_response.create(
-                model="tts-1",
-                voice="alloy",
-                response_format="pcm",
-                input=response,
-            ) as stream:
-                for chunk in stream.iter_bytes(chunk_size=1024):
-                    player.write(chunk)
-        except KeyboardInterrupt:
-            print("Text-to-speech interrupted.")
-        finally:
-            player.stop_stream()
-            player.close()
+            player = PyAudio().open(format=paInt16, channels=1, rate=24000, output=True)
+            try:
+                with openai.audio.speech.with_streaming_response.create(
+                    model="tts-1",
+                    voice="alloy",
+                    response_format="pcm",
+                    input=response,
+                ) as stream:
+                    for chunk in stream.iter_bytes(chunk_size=1024):
+                        player.write(chunk)
+            except KeyboardInterrupt:
+                print("Text-to-speech interrupted.")
+            finally:
+                player.stop_stream()
+                player.close()
+        except OSError as e:
+            print(f"Audio device error: {e}")
+            print("Falling back to text output:")
+            print(response)
+        except Exception as e:
+            print(f"Unexpected error in text-to-speech: {e}")
+            print("Falling back to text output:")
+            print(response)
 
 # Main script
 webcam_stream = WebcamStream().start()
@@ -241,29 +250,52 @@ assistant = EnhancedCommentaryAssistant(model, time_interval=5)
 
 try:
     while True:
-        frame = webcam_stream.read()
+        if not webcam_stream.paused:
+            frame = webcam_stream.read()
+            
+            # Perform object detection
+            outputs = object_detector.detect_objects(frame)
+            detected_objects = outputs["instances"].pred_classes.tolist()
+            
+            # Visualize detection results
+            frame_with_detection = object_detector.visualize_detection(frame, outputs)
+            
+            # Check if a person is detected (class 0 in COCO dataset)
+            if 0 in detected_objects:
+                print("Person detected!")
+                webcam_stream.pause()  # Pause the webcam stream
+                
+                # Display the frame being analysed
+                frame_to_display = add_subtitle_to_frame(frame_with_detection, "Analysing...")
+                cv2.imshow("CCTV Feed with Object Detection", frame_to_display)
+                cv2.waitKey(1)  # Update the display
+                
+                # Generate commentary
+                encoded_image = base64.b64encode(cv2.imencode('.jpg', frame)[1])
+                assistant.generate_commentary(encoded_image, detected_objects)
+                
+                # Display the frame with commentary
+                frame_with_subtitle = add_subtitle_to_frame(frame_with_detection, assistant.current_commentary)
+                cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
+                cv2.waitKey(1)  # Update the display
+                
+                # Keep displaying this frame for a short duration (e.g., 3 seconds)
+                start_time = time.time()
+                while time.time() - start_time < 3:
+                    if cv2.waitKey(100) in [27, ord("q")]:
+                        raise KeyboardInterrupt
+                
+                webcam_stream.resume()  # Resume the webcam stream
+            else:
+                # If no person detected, just display the current frame
+                frame_with_subtitle = add_subtitle_to_frame(frame_with_detection, assistant.current_commentary)
+                cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
         
-        # Perform object detection
-        outputs = object_detector.detect_objects(frame)
-        detected_objects = outputs["instances"].pred_classes.tolist()
-        
-        # Visualize detection results
-        frame_with_detection = object_detector.visualize_detection(frame, outputs)
-        
-        # Check if a person is detected (class 0 in COCO dataset)
-        if 0 in detected_objects:
-            print("Person detected!")
-            encoded_image = base64.b64encode(cv2.imencode('.jpg', frame)[1])
-            assistant.generate_commentary(encoded_image, detected_objects)
-        
-        # Add subtitle to the frame
-        frame_with_subtitle = add_subtitle_to_frame(frame_with_detection, assistant.current_commentary)
-        
-        # Display the frame
-        cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
-
         if cv2.waitKey(1) in [27, ord("q")]:
             break
+
+except KeyboardInterrupt:
+    print("Script interrupted by user")
 finally:
     webcam_stream.stop()
     cv2.destroyAllWindows()
