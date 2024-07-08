@@ -172,8 +172,8 @@ class EnhancedCommentaryAssistant:
         self.session_start = True
         self.current_commentary = ""
         self.SYSTEM_PROMPT = """
-        You are an observant AI assistant tasked with describing people seen in the CCTV footage, 
-        their approximate age group and any actions they are engaged in. 
+        You are an AI-powered security camera monitor tasked with describing any people seen in the footage, 
+        their approximate age group and apparent gender, and any actions they appear to be engaged in. 
         Keep your descriptions very short, focussing only on the people and what they're doing.
         """
 
@@ -194,7 +194,7 @@ class EnhancedCommentaryAssistant:
         else:
             time_mention = ""
 
-        prompt = f"{intro}{time_mention}Describe briefly what the detected people are doing in this image. Detected objects: {detected_objects}"
+        prompt = f"{intro}{time_mention}Describe briefly what the people are doing in this image. Detected objects: {detected_objects}"
         
         try:
             messages = [
@@ -279,9 +279,9 @@ try:
                 cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
                 cv2.waitKey(1)  # Update the display
                 
-                # Keep displaying this frame for a short duration (e.g., 3 seconds)
+                # Keep displaying this frame for a short duration (e.g., 1 second)
                 start_time = time.time()
-                while time.time() - start_time < 3:
+                while time.time() - start_time < 1:
                     if cv2.waitKey(100) in [27, ord("q")]:
                         raise KeyboardInterrupt
                 
