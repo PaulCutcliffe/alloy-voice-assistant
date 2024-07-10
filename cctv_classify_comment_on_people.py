@@ -27,6 +27,10 @@ from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog
 
+# Define a fixed window size
+WINDOW_WIDTH = 1024
+WINDOW_HEIGHT = 768
+
 load_dotenv()
 
 # Set locale to British English
@@ -252,6 +256,10 @@ class EnhancedCommentaryAssistant:
             print("Falling back to text output:")
             print(response)
 
+def create_window():
+    cv2.namedWindow("CCTV Feed with Object Detection", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("CCTV Feed with Object Detection", WINDOW_WIDTH, WINDOW_HEIGHT)
+
 def update_frame_display():
     if not webcam_stream.paused:
         frame = webcam_stream.read()
@@ -259,7 +267,11 @@ def update_frame_display():
         frame = analyzed_frame.copy()
     
     frame_with_subtitle = add_subtitle_to_frame(frame, assistant.current_commentary)
-    cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
+
+    # Resize the frame to fit our fixed window size
+    frame_resized = cv2.resize(frame_with_subtitle, (WINDOW_WIDTH, WINDOW_HEIGHT))
+    
+    cv2.imshow("CCTV Feed with Object Detection", frame_resized)
     cv2.waitKey(1)  # This line is crucial to actually update the display
 
 # Main script
@@ -267,6 +279,8 @@ webcam_stream = WebcamStream().start()
 object_detector = ObjectDetector()
 model = ChatOpenAI(model="gpt-4o", max_tokens=300)
 assistant = EnhancedCommentaryAssistant(model, time_interval=5, frame_update_callback=update_frame_display)
+
+create_window()
 
 try:
     while True:
