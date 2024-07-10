@@ -182,7 +182,7 @@ class EnhancedCommentaryAssistant:
         current_time = datetime.now()
         
         if self.session_start:
-            date_str = current_time.strftime(f"%A the {ordinal(current_time.day)} of %B, %Y")
+            date_str = current_time.strftime("%A the %d of %B, %Y")
             intro = f"Session starting on {date_str}. "
             self.session_start = False
         else:
@@ -195,7 +195,7 @@ class EnhancedCommentaryAssistant:
         else:
             time_mention = ""
 
-        prompt = f"{intro}{time_mention}Describe briefly what the people are doing in this image. Detected objects: {detected_objects}"
+        prompt = f"{intro}{time_mention}Describe what the detected people are doing in this image. Detected objects: {detected_objects}"
         
         try:
             messages = [
@@ -213,9 +213,14 @@ class EnhancedCommentaryAssistant:
 
         full_response = f"{intro}{time_mention}{response_text}"
         print("Commentary:", full_response)
-        self.current_commentary = full_response
+        self.update_subtitle(full_response)
         self._tts(full_response)
         self.last_commentary_time = current_time
+
+    def update_subtitle(self, text):
+        self.current_commentary = text
+        # Here you could add any additional logic for updating the display
+        # For example, you might want to trigger a redraw of the frame
 
     def _tts(self, response):
         try:
