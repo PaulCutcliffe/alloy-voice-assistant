@@ -164,7 +164,7 @@ class ObjectDetector:
         return np.array(out.get_image()[:, :, ::-1])
 
 class EnhancedCommentaryAssistant:
-    def __init__(self, model, time_interval=5):
+    def __init__(self, model, time_interval=5, frame_update_callback=None):
         self.model = model
         self.last_commentary_time = datetime.now()
         self.last_time_mention = datetime.now() - timedelta(minutes=time_interval)
@@ -177,12 +177,13 @@ class EnhancedCommentaryAssistant:
         Keep your descriptions very short, focussing only on the people and what they're doing. Don't describe 
         the scene or background, other than when necessary to describe people and their actions.
         """
+        self.frame_update_callback = frame_update_callback
 
     def generate_commentary(self, image, detected_objects):
         current_time = datetime.now()
         
         if self.session_start:
-            date_str = current_time.strftime("%A the %d of %B, %Y")
+            date_str = current_time.strftime(f"%A the {ordinal(current_time.day)} of %B, %Y")
             intro = f"Session starting on {date_str}. "
             self.session_start = False
         else:
@@ -214,13 +215,16 @@ class EnhancedCommentaryAssistant:
         full_response = f"{intro}{time_mention}{response_text}"
         print("Commentary:", full_response)
         self.update_subtitle(full_response)
+        
+        # Call the frame update callback to refresh the display
+        if self.frame_update_callback:
+            self.frame_update_callback()
+        
         self._tts(full_response)
         self.last_commentary_time = current_time
 
     def update_subtitle(self, text):
         self.current_commentary = text
-        # Here you could add any additional logic for updating the display
-        # For example, you might want to trigger a redraw of the frame
 
     def _tts(self, response):
         try:
@@ -248,11 +252,21 @@ class EnhancedCommentaryAssistant:
             print("Falling back to text output:")
             print(response)
 
+def update_frame_display():
+    if not webcam_stream.paused:
+        frame = webcam_stream.read()
+    else:
+        frame = analyzed_frame.copy()
+    
+    frame_with_subtitle = add_subtitle_to_frame(frame, assistant.current_commentary)
+    cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
+    cv2.waitKey(1)  # This line is crucial to actually update the display
+
 # Main script
 webcam_stream = WebcamStream().start()
 object_detector = ObjectDetector()
 model = ChatOpenAI(model="gpt-4o", max_tokens=300)
-assistant = EnhancedCommentaryAssistant(model, time_interval=5)
+assistant = EnhancedCommentaryAssistant(model, time_interval=5, frame_update_callback=update_frame_display)
 
 try:
     while True:
@@ -269,33 +283,22 @@ try:
             # Check if a person is detected (class 0 in COCO dataset)
             if 0 in detected_objects:
                 print("Person detected!")
-                webcam_stream.pause()  # Pause the webcam stream
-                
-                # Display the frame being analysed
-                frame_to_display = add_subtitle_to_frame(frame_with_detection, "Analysing...")
-                cv2.imshow("CCTV Feed with Object Detection", frame_to_display)
-                cv2.waitKey(1)  # Update the display
+                webcam_stream.pause()
+                analyzed_frame = frame_with_detection.copy()
                 
                 # Generate commentary
                 encoded_image = base64.b64encode(cv2.imencode('.jpg', frame)[1])
                 assistant.generate_commentary(encoded_image, detected_objects)
                 
-                # Display the frame with commentary
-                frame_with_subtitle = add_subtitle_to_frame(frame_with_detection, assistant.current_commentary)
-                cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
-                cv2.waitKey(1)  # Update the display
+                # The frame will be updated by the callback in generate_commentary
                 
-                # Keep displaying this frame for a short duration (e.g., 1 second)
-                start_time = time.time()
-                while time.time() - start_time < 1:
-                    if cv2.waitKey(100) in [27, ord("q")]:
-                        raise KeyboardInterrupt
+                # Wait for a short duration after commentary
+                time.sleep(1)
                 
-                webcam_stream.resume()  # Resume the webcam stream
+                webcam_stream.resume()
             else:
-                # If no person detected, just display the current frame
-                frame_with_subtitle = add_subtitle_to_frame(frame_with_detection, assistant.current_commentary)
-                cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
+                # If no person detected, just update the frame
+                update_frame_display()
         
         if cv2.waitKey(1) in [27, ord("q")]:
             break
