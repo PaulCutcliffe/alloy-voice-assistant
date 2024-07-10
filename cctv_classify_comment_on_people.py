@@ -174,7 +174,8 @@ class EnhancedCommentaryAssistant:
         self.SYSTEM_PROMPT = """
         You are an AI-powered security camera monitor tasked with describing any people seen in the footage, 
         their approximate age group and apparent gender, and any actions they appear to be engaged in. 
-        Keep your descriptions very short, focussing only on the people and what they're doing.
+        Keep your descriptions very short, focussing only on the people and what they're doing. Don't describe 
+        the scene or background, other than when necessary to describe people and their actions.
         """
 
     def generate_commentary(self, image, detected_objects):
