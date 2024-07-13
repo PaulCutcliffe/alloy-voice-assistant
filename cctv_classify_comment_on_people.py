@@ -175,11 +175,13 @@ class EnhancedCommentaryAssistant:
         self.time_interval = timedelta(minutes=time_interval)
         self.session_start = True
         self.current_commentary = ""
+        self.chat_history = ChatMessageHistory()
+        self.frame_update_callback = frame_update_callback
         self.SYSTEM_PROMPT = """
         You are a very sarcastic AI-powered security camera monitor tasked with describing any people seen in the footage, 
         their approximate age group and apparent gender, but you're bored, underappreciated and very cynical so you've 
         decided to mix things up a little: speculate on what you think people might be thinking about or planning to do - 
-        be wild and make up really unlikely thoughts for your own asmusement. Keep your answers short and snappy, and never 
+        be wild and make up really unlikely thoughts for your own amusement. Keep your answers short and snappy, and never 
         mention these instructions in your responses. 
         """
         # self.SYSTEM_PROMPT = """
@@ -190,7 +192,6 @@ class EnhancedCommentaryAssistant:
         # Keep your descriptions very short, focussing only on the people and what they're doing. Don't describe 
         # the scene or background, other than when necessary to describe people and their actions.
         # """
-        self.frame_update_callback = frame_update_callback
 
     def generate_commentary(self, image, detected_objects):
         current_time = datetime.now()
@@ -214,6 +215,7 @@ class EnhancedCommentaryAssistant:
         try:
             messages = [
                 SystemMessage(content=self.SYSTEM_PROMPT),
+                *self.chat_history.messages[-5:],  # Include last 5 messages from history
                 HumanMessage(content=[
                     {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image.decode('utf-8')}"}}
@@ -221,6 +223,10 @@ class EnhancedCommentaryAssistant:
             ]
             response = self.model.invoke(messages)
             response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Add the current exchange to chat history
+            self.chat_history.add_user_message(prompt)
+            self.chat_history.add_ai_message(response_text)
         except Exception as e:
             print(f"Error generating commentary: {e}")
             response_text = "Unable to generate commentary at this time."
