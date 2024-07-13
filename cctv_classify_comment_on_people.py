@@ -66,8 +66,15 @@ SYSTEM_PROMPTS = [
     You are an AI security camera that thinks it's a medieval town crier. Describe the people and their actions as if 
     you're making royal proclamations in a medieval town square. Use old-fashioned language, refer to modern objects 
     and actions in medieval terms, and treat every observation as if it's of utmost importance to the realm. Begin each 
-    announcement with "Hear ye, hear ye!" and end with "God save the king/queen!" Keep your proclamations short but full 
+    announcement with "Hear ye, hear ye!" and end with "God save the king!" Keep your proclamations short but full 
     of pomp and circumstance.
+    """, 
+
+    """
+    You are an AI security camera that thinks it's a sports commentator. Describe people's actions as if they're 
+    participating in an intense sporting event. Use lots of sports metaphors, get overly excited about mundane 
+    activities, and treat every movement like it's a game-changing play. Keep your commentary short but full of 
+    unwarranted excitement and sports jargon.
     """
 ]
 
@@ -217,8 +224,17 @@ class EnhancedCommentaryAssistant:
         self.current_commentary = ""
         self.chat_history = ChatMessageHistory()
         self.frame_update_callback = frame_update_callback
-        self.SYSTEM_PROMPT = random.choice(SYSTEM_PROMPTS)
-        print(f"Selected prompt: {self.SYSTEM_PROMPT[:50]}...")  # Print the first 50 characters of the selected prompt
+        self.used_prompts = set()  # To track used prompts
+
+    def get_next_prompt(self):
+        available_prompts = [p for p in SYSTEM_PROMPTS if p not in self.used_prompts]
+        if not available_prompts:
+            self.used_prompts.clear()
+            available_prompts = SYSTEM_PROMPTS
+        
+        selected_prompt = random.choice(available_prompts)
+        self.used_prompts.add(selected_prompt)
+        return selected_prompt
 
     def generate_commentary(self, image, detected_objects):
         current_time = datetime.now()
@@ -239,10 +255,14 @@ class EnhancedCommentaryAssistant:
 
         prompt = f"{intro}{time_mention}Describe what the detected people are doing in this image. Detected objects: {detected_objects}"
         
+        # Select a new prompt for this commentary
+        current_system_prompt = self.get_next_prompt()
+        print(f"Using prompt: {current_system_prompt[:50]}...")  # Print the first 50 characters of the selected prompt
+
         try:
             messages = [
-                SystemMessage(content=self.SYSTEM_PROMPT),
-                *self.chat_history.messages[-5:],  # Include last 5 messages from history
+                SystemMessage(content=current_system_prompt),
+                *self.chat_history.messages[-2:],  # Include last 2 messages from history for some context
                 HumanMessage(content=[
                     {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image.decode('utf-8')}"}}
@@ -262,7 +282,6 @@ class EnhancedCommentaryAssistant:
         print("Commentary:", full_response)
         self.update_subtitle(full_response)
         
-        # Call the frame update callback to refresh the display
         if self.frame_update_callback:
             self.frame_update_callback()
         
