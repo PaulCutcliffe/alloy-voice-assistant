@@ -236,7 +236,7 @@ class WebcamStream:
         self.previous_frame = current_frame
         return significant_motion
 
-def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=0.3, font_color=(255, 255, 255), bg_color=(0, 0, 0), line_type=1):
+def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=0.5, font_color=(255, 255, 255), bg_color=(0, 0, 0), line_type=1):
     # Ensure frame is in the correct format
     if isinstance(frame, np.ndarray):
         frame = frame.copy()
@@ -251,9 +251,26 @@ def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale
     pad_right = 10
     pad_bottom = 10
     
+    # Function to calculate text width
+    def get_text_width(text):
+        return cv2.getTextSize(text, font, font_scale, line_type)[0][0]
+    
     # Wrap the text to fit within the frame width, accounting for padding
     max_text_width = frame_w - pad_left - pad_right
-    wrapped_text = textwrap.wrap(text, width=int(max_text_width / (font_scale * 10)))
+    wrapped_text = []
+    for line in text.split('\n'):
+        if get_text_width(line) <= max_text_width:
+            wrapped_text.append(line)
+        else:
+            words = line.split()
+            current_line = words[0]
+            for word in words[1:]:
+                if get_text_width(current_line + ' ' + word) <= max_text_width:
+                    current_line += ' ' + word
+                else:
+                    wrapped_text.append(current_line)
+                    current_line = word
+            wrapped_text.append(current_line)
     
     # Calculate the total height of the text block
     line_height = 20
@@ -272,13 +289,22 @@ def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale
     # Apply the overlay
     cv2.addWeighted(overlay, 0.6, frame, 1, 0, frame)
     
+    # Function to draw text with outline
+    def draw_text_with_outline(img, text, pos, font, font_scale, text_color, outline_color, thickness):
+        # Draw outline
+        cv2.putText(img, text, pos, font, font_scale, outline_color, thickness * 3, line_type)
+        # Draw text
+        cv2.putText(img, text, pos, font, font_scale, text_color, thickness, line_type)
+    
+    def draw_text_with_shadow(img, text, pos, font, font_scale, text_color, shadow_color, thickness):
+        x, y = pos
+        cv2.putText(img, text, (x+1, y+1), font, font_scale, shadow_color, thickness, line_type)
+        cv2.putText(img, text, pos, font, font_scale, text_color, thickness, line_type)
+
     # Add each line of text
     for i, line in enumerate(wrapped_text):
-        text_size, _ = cv2.getTextSize(line, font, font_scale, line_type)
-        text_w, text_h = text_size
-        text_x = pad_left
         text_y = frame_h - text_height + (i * line_height) + pad_bottom
-        cv2.putText(frame, line, (text_x, text_y), font, font_scale, font_color, line_type)
+        draw_text_with_outline(frame, line, (pad_left, text_y), font, font_scale, font_color, (0, 0, 0), line_type)
     
     return frame
 
