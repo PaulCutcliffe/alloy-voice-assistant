@@ -28,6 +28,15 @@ from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog
 
+# Since using CUDA, we need to slow things down a little
+FRAME_SKIP = 10  # Process every 5th frame
+COOLDOWN_PERIOD = 3  # Wait 3 seconds between commentaries
+PERSON_PERSISTENCE = 7  # Require person to be in 3 consecutive frames
+
+last_commentary_time = 0
+person_detected_count = 0
+frame_count = 0  # Initialize frame_count here
+
 # Define a fixed window size
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 960
@@ -333,6 +342,12 @@ class ObjectDetector:
         out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
         return np.array(out.get_image()[:, :, ::-1])
 
+    def draw_detection_borders(self, image, outputs):
+        for box in outputs["instances"].pred_boxes.tensor.cpu().numpy():
+            x1, y1, x2, y2 = map(int, box)
+            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        return image
+
 class EnhancedCommentaryAssistant:
     def __init__(self, model, time_interval=5, frame_update_callback=None):
         self.model = model
@@ -479,36 +494,47 @@ create_window()
 
 try:
     while True:
-        if not webcam_stream.paused:
-            frame = webcam_stream.read()
+        frame_count += 1
+        if frame_count % FRAME_SKIP != 0:
+            continue  # Skip this frame
+
+        frame = webcam_stream.read()
             
-            # Perform object detection
-            outputs = object_detector.detect_objects(frame)
-            detected_objects = outputs["instances"].pred_classes.tolist()
-            
-            # Visualize detection results
-            frame_with_detection = object_detector.visualize_detection(frame, outputs)
-            
-            # Check if a person is detected (class 0 in COCO dataset)
-            if 0 in detected_objects:
-                print("Person detected!")
-                webcam_stream.pause()
-                analyzed_frame = frame_with_detection.copy()
-                
-                # Generate commentary
-                encoded_image = base64.b64encode(cv2.imencode('.jpg', frame)[1])
-                assistant.generate_commentary(encoded_image, detected_objects)
-                
-                # The frame will be updated by the callback in generate_commentary
-                
-                # Wait for a short duration after commentary
-                time.sleep(1)
-                
-                webcam_stream.resume()
-            else:
-                # If no person detected, just update the frame
-                update_frame_display()
+        # Perform object detection
+        outputs = object_detector.detect_objects(frame)
+        detected_objects = outputs["instances"].pred_classes.tolist()
         
+        # Check if a person is detected (class 0 in COCO dataset)
+        if 0 in detected_objects:
+            person_detected_count += 1
+        else:
+            person_detected_count = 0
+
+        current_time = time.time()
+        if (0 in detected_objects and 
+            person_detected_count >= PERSON_PERSISTENCE and
+            current_time - last_commentary_time > COOLDOWN_PERIOD):
+            
+            print("Person detected!")
+            webcam_stream.pause()
+            frame_with_detection = object_detector.draw_detection_borders(frame, outputs)
+            analyzed_frame = frame_with_detection.copy()
+            
+            # Generate commentary
+            encoded_image = base64.b64encode(cv2.imencode('.jpg', frame)[1])
+            assistant.generate_commentary(encoded_image, detected_objects)
+            
+            last_commentary_time = current_time
+            webcam_stream.resume()
+        else:
+            frame_with_detection = frame.copy()
+        
+        # Add subtitle to the frame
+        frame_with_subtitle = add_subtitle_to_frame(frame_with_detection, assistant.current_commentary)
+        
+        # Display the frame
+        cv2.imshow("CCTV Feed with Object Detection", frame_with_subtitle)
+
         if cv2.waitKey(1) in [27, ord("q")]:
             break
 
