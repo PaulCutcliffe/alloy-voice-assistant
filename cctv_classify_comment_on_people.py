@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta
 import locale
 import random
+import unicodedata
 
 import cv2
 import numpy as np
@@ -28,8 +29,11 @@ from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog
 
 # Define a fixed window size
-WINDOW_WIDTH = 1024
-WINDOW_HEIGHT = 768
+WINDOW_WIDTH = 1280
+WINDOW_HEIGHT = 960
+
+# List of available voices for text-to-speech
+VOICE_OPTIONS = ["alloy", "echo", "fable", "nova", "onyx", "shimmer"]
 
 # List of system prompts
 SYSTEM_PROMPTS = [
@@ -338,7 +342,14 @@ class EnhancedCommentaryAssistant:
         self.chat_history = ChatMessageHistory()
         self.frame_update_callback = frame_update_callback
         self.used_prompts = set()
+        self.current_voice = random.choice(VOICE_OPTIONS)
 
+    def sanitize_text(self, text):
+        # Normalize the Unicode text
+        normalized = unicodedata.normalize('NFKD', text)
+        # Remove any remaining non-ASCII characters
+        return normalized.encode('ASCII', 'ignore').decode('ASCII')
+    
     def get_next_prompt(self):
         available_prompts = [p for p in SYSTEM_PROMPTS if p not in self.used_prompts]
         if not available_prompts:
@@ -374,7 +385,7 @@ class EnhancedCommentaryAssistant:
 
         full_prompt = f"{current_system_prompt}\n\n{additional_prompt}"
         
-        print(f"Using prompt: {current_system_prompt[:50]}...")  # Print the first 50 characters of the selected prompt
+        print(f"Using prompt: {current_system_prompt}...")  # Print the selected prompt
 
         try:
             messages = [
@@ -385,23 +396,26 @@ class EnhancedCommentaryAssistant:
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image.decode('utf-8')}"}}
                 ])
             ]
-            response = self.model.invoke(messages, max_tokens=100)  # Limit to 100 tokens for shorter responses
+            response = self.model.invoke(messages, max_tokens=200)  # Limit to 100 tokens for shorter responses
             response_text = response.content if hasattr(response, 'content') else str(response)
+
+            # Sanitize the response text
+            sanitized_response = self.sanitize_text(response_text)
             
             # Add the current exchange to chat history
             self.chat_history.add_user_message(f"Describe the image. Detected objects: {detected_objects}")
-            self.chat_history.add_ai_message(response_text)
+            self.chat_history.add_ai_message(sanitized_response)
         except Exception as e:
             print(f"Error generating commentary: {e}")
-            response_text = "Unable to generate commentary at this time."
+            sanitized_response = "Unable to generate commentary at this time."
 
-        print("Commentary:", response_text)
-        self.update_subtitle(response_text)
+        print("Commentary:", sanitized_response)
+        self.update_subtitle(sanitized_response)
         
         if self.frame_update_callback:
             self.frame_update_callback()
         
-        self._tts(response_text)
+        self._tts(sanitized_response)
         self.last_commentary_time = current_time
 
     def update_subtitle(self, text):
@@ -409,11 +423,14 @@ class EnhancedCommentaryAssistant:
 
     def _tts(self, response):
         try:
+            # Choose a random voice for this commentary
+            self.current_voice = random.choice(VOICE_OPTIONS)
+            
             player = PyAudio().open(format=paInt16, channels=1, rate=24000, output=True)
             try:
                 with openai.audio.speech.with_streaming_response.create(
                     model="tts-1",
-                    voice="alloy",
+                    voice=self.current_voice,
                     response_format="pcm",
                     input=response,
                 ) as stream:
