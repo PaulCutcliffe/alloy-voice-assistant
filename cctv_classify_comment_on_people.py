@@ -337,7 +337,7 @@ class EnhancedCommentaryAssistant:
         self.current_commentary = ""
         self.chat_history = ChatMessageHistory()
         self.frame_update_callback = frame_update_callback
-        self.used_prompts = set()  # To track used prompts
+        self.used_prompts = set()
 
     def get_next_prompt(self):
         available_prompts = [p for p in SYSTEM_PROMPTS if p not in self.used_prompts]
@@ -352,53 +352,56 @@ class EnhancedCommentaryAssistant:
     def generate_commentary(self, image, detected_objects):
         current_time = datetime.now()
         
-        if self.session_start:
+        if self.session_start or current_time - self.last_time_mention >= self.time_interval:
             date_str = current_time.strftime(f"%A the {ordinal(current_time.day)} of %B, %Y")
-            intro = f"Session starting on {date_str}. "
-            self.session_start = False
-        else:
-            intro = ""
-
-        if current_time - self.last_time_mention >= self.time_interval:
             time_str = current_time.strftime("%H:%M")
-            time_mention = f"At {time_str}, "
+            date_time_info = f"The current date is {date_str} and the time is {time_str}. "
             self.last_time_mention = current_time
+            if self.session_start:
+                self.session_start = False
         else:
-            time_mention = ""
+            date_time_info = ""
 
-        prompt = f"{intro}{time_mention}Describe what the detected people are doing in this image. Detected objects: {detected_objects}"
-        
         # Select a new prompt for this commentary
         current_system_prompt = self.get_next_prompt()
-        print(f"Using prompt: {current_system_prompt}...")  # Print the selected prompt
+        
+        # Additional prompting
+        additional_prompt = f"""
+        Always use British English spellings (e.g., '-ise' instead of '-ize') unless the scenario explicitly requires otherwise.
+        Incorporate the following date and time information into your response in a way that fits the scenario: {date_time_info}
+        Keep your response concise, ideally within 2-3 sentences.
+        """
+
+        full_prompt = f"{current_system_prompt}\n\n{additional_prompt}"
+        
+        print(f"Using prompt: {current_system_prompt[:50]}...")  # Print the first 50 characters of the selected prompt
 
         try:
             messages = [
-                SystemMessage(content=current_system_prompt),
+                SystemMessage(content=full_prompt),
                 *self.chat_history.messages[-2:],  # Include last 2 messages from history for some context
                 HumanMessage(content=[
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": f"Describe what the detected people are doing in this image. Detected objects: {detected_objects}"},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image.decode('utf-8')}"}}
                 ])
             ]
-            response = self.model.invoke(messages)
+            response = self.model.invoke(messages, max_tokens=100)  # Limit to 100 tokens for shorter responses
             response_text = response.content if hasattr(response, 'content') else str(response)
             
             # Add the current exchange to chat history
-            self.chat_history.add_user_message(prompt)
+            self.chat_history.add_user_message(f"Describe the image. Detected objects: {detected_objects}")
             self.chat_history.add_ai_message(response_text)
         except Exception as e:
             print(f"Error generating commentary: {e}")
             response_text = "Unable to generate commentary at this time."
 
-        full_response = f"{intro}{time_mention}{response_text}"
-        print("Commentary:", full_response)
-        self.update_subtitle(full_response)
+        print("Commentary:", response_text)
+        self.update_subtitle(response_text)
         
         if self.frame_update_callback:
             self.frame_update_callback()
         
-        self._tts(full_response)
+        self._tts(response_text)
         self.last_commentary_time = current_time
 
     def update_subtitle(self, text):
