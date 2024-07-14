@@ -318,9 +318,11 @@ class ObjectDetector:
         cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Set threshold for this model
         cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
-        cfg.MODEL.DEVICE = 'cpu'  # Force CPU usage for object detection
         self.predictor = DefaultPredictor(cfg)
         self.metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
+
+        # Use CUDA if available, otherwise fall back to CPU
+        cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
     def detect_objects(self, image):
         outputs = self.predictor(image)
