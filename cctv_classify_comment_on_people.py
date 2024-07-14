@@ -343,6 +343,7 @@ class EnhancedCommentaryAssistant:
         self.frame_update_callback = frame_update_callback
         self.used_prompts = set()
         self.current_voice = random.choice(VOICE_OPTIONS)
+        self.speech_rate = 1.1  # 10% faster than normal speech rate
 
     def sanitize_text(self, text):
         # Normalize the Unicode text
@@ -363,15 +364,12 @@ class EnhancedCommentaryAssistant:
     def generate_commentary(self, image, detected_objects):
         current_time = datetime.now()
         
-        if self.session_start or current_time - self.last_time_mention >= self.time_interval:
-            date_str = current_time.strftime(f"%A the {ordinal(current_time.day)} of %B, %Y")
-            time_str = current_time.strftime("%H:%M")
-            date_time_info = f"The current date is {date_str} and the time is {time_str}. "
-            self.last_time_mention = current_time
-            if self.session_start:
-                self.session_start = False
-        else:
-            date_time_info = ""
+        date_str = current_time.strftime(f"%A the {ordinal(current_time.day)} of %B, %Y")
+        time_str = current_time.strftime("%H:%M")
+        date_time_info = f"The current date is {date_str} and the time is {time_str}. "
+
+        if self.session_start:
+            self.session_start = False
 
         # Select a new prompt for this commentary
         current_system_prompt = self.get_next_prompt()
@@ -396,7 +394,7 @@ class EnhancedCommentaryAssistant:
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image.decode('utf-8')}"}}
                 ])
             ]
-            response = self.model.invoke(messages, max_tokens=200)  # Limit to 100 tokens for shorter responses
+            response = self.model.invoke(messages, max_tokens=200)
             response_text = response.content if hasattr(response, 'content') else str(response)
 
             # Sanitize the response text
@@ -433,6 +431,7 @@ class EnhancedCommentaryAssistant:
                     voice=self.current_voice,
                     response_format="pcm",
                     input=response,
+                    speed=self.speech_rate  # Adjust the speech rate
                 ) as stream:
                     for chunk in stream.iter_bytes(chunk_size=1024):
                         player.write(chunk)
