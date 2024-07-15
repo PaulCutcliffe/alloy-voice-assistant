@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import locale
 import random
 import unicodedata
+from wordpress_publisher import WordPressPublisher
+from config import WP_SITE_URL, WP_USERNAME, WP_APP_PASSWORD
 
 import cv2
 import numpy as np
@@ -27,6 +29,13 @@ from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog
+
+# Initialize WordPress publisher
+wp_publisher = WordPressPublisher(
+    WP_SITE_URL,
+    WP_USERNAME,
+    WP_APP_PASSWORD
+)
 
 # Since using CUDA, we need to slow things down a little
 FRAME_SKIP = 10  # Process every 5th frame
@@ -426,7 +435,7 @@ class EnhancedCommentaryAssistant:
 
         full_prompt = f"{current_system_prompt}\n\n{additional_prompt}"
         
-        print(f"Using prompt: {current_system_prompt}...")  # Print the selected prompt
+        print(f"Using prompt: {current_system_prompt[:100]}...")  # Print the first 100 characters of the selected prompt
 
         try:
             messages = [
@@ -458,6 +467,8 @@ class EnhancedCommentaryAssistant:
         
         self._tts(sanitized_response)
         self.last_commentary_time = current_time
+
+        return sanitized_response, current_system_prompt  # Return both the commentary and the prompt used
 
     def update_subtitle(self, text):
         self.current_commentary = text
@@ -546,9 +557,22 @@ try:
             frame_with_detection = object_detector.draw_detection_borders(frame, outputs)
             analyzed_frame = frame_with_detection.copy()
             
-            # Generate commentary
+            # Capture the current time
+            capture_time = datetime.now()
+            
+            # Generate commentary and get the prompt used
             encoded_image = base64.b64encode(cv2.imencode('.jpg', frame)[1])
-            assistant.generate_commentary(encoded_image, detected_objects)
+            commentary, prompt_used = assistant.generate_commentary(encoded_image, detected_objects)
+            
+            # Save the frame with detection and subtitles
+            frame_with_subtitle = add_subtitle_to_frame(frame_with_detection, commentary)
+            image_path = f"captured_frame_{int(time.time())}.jpg"
+            cv2.imwrite(image_path, frame_with_subtitle)
+            
+            # Create WordPress post
+            post_title = f"CCTV Fun: {capture_time.strftime('%Y-%m-%d %H:%M:%S')}"
+            post_content = f"<p>{commentary}</p>"
+            wp_publisher.create_post(post_title, post_content, image_path, capture_time, prompt_used)
             
             last_commentary_time = current_time
             webcam_stream.resume()
