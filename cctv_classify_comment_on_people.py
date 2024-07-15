@@ -353,9 +353,21 @@ class EnhancedCommentaryAssistant:
 
     def sanitize_text(self, text):
         # Normalize the Unicode text
-        normalized = unicodedata.normalize('NFKD', text)
-        # Remove any remaining non-ASCII characters
-        return normalized.encode('ASCII', 'ignore').decode('ASCII')
+        normalized = unicodedata.normalize('NFKC', text)
+        # Replace specific problematic characters
+        replacements = {
+            ''': "'",
+            ''': "'",
+            '"': '"',
+            '"': '"',
+            '…': '...',
+            '—': '-',
+            '–': '-'
+        }
+        for old, new in replacements.items():
+            normalized = normalized.replace(old, new)
+        # Remove any remaining non-printable characters
+        return ''.join(ch for ch in normalized if unicodedata.category(ch)[0] != 'C')
     
     def get_next_prompt(self):
         available_prompts = [p for p in SYSTEM_PROMPTS if p not in self.used_prompts]

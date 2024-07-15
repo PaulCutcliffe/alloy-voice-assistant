@@ -13,8 +13,9 @@ class WordPressPublisher:
         # First, upload the image
         media_id = self.upload_image(image_path)
 
-        # Format the content to include the prompt
-        full_content = f"{content}\n\n<h3>AI Prompt Used:</h3>\n<p>{prompt}</p>"
+        # Ensure title and content are properly encoded
+        title = title.encode('utf-8').decode('utf-8')
+        full_content = full_content.encode('utf-8').decode('utf-8')
 
         # Create the post
         post_data = {
@@ -22,7 +23,7 @@ class WordPressPublisher:
             'content': full_content,
             'status': 'publish',
             'featured_media': media_id,
-            'date': capture_time.isoformat()  # Set the publication date to the capture time
+            'date': capture_time.isoformat()
         }
 
         response = requests.post(f"{self.api_url}/posts", json=post_data, auth=self.auth)
