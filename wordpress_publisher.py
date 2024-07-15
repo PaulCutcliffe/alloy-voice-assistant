@@ -15,9 +15,11 @@ class WordPressPublisher:
 
         # Ensure title and content are properly encoded
         title = title.encode('utf-8').decode('utf-8')
-        full_content = full_content.encode('utf-8').decode('utf-8')
+        content = content.encode('utf-8').decode('utf-8')
 
-        # Create the post
+        # Format the content to include the prompt
+        full_content = f"{content}\n\n<h3>AI Prompt Used:</h3>\n<p>{prompt}</p>"
+
         post_data = {
             'title': title,
             'content': full_content,
