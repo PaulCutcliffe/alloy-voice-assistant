@@ -321,32 +321,58 @@ def add_subtitle_to_frame(frame, text, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale
     
     return frame
 
+import random
+
 class ObjectDetector:
     def __init__(self):
         cfg = get_cfg()
         cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Set threshold for this model
         cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+        cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
         self.predictor = DefaultPredictor(cfg)
         self.metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
-
-        # Use CUDA if available, otherwise fall back to CPU
-        cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+        self.class_colors = {}
 
     def detect_objects(self, image):
         outputs = self.predictor(image)
         return outputs
 
+    def draw_detection_borders(self, image, outputs):
+        instances = outputs["instances"].to("cpu")
+        boxes = instances.pred_boxes.tensor.numpy()
+        classes = instances.pred_classes.numpy()
+        scores = instances.scores.numpy()
+
+        for box, cls, score in zip(boxes, classes, scores):
+            x1, y1, x2, y2 = map(int, box)
+            class_name = self.metadata.thing_classes[cls]
+            
+            # Generate a consistent color for each class
+            if class_name not in self.class_colors:
+                self.class_colors[class_name] = tuple(random.randint(0, 255) for _ in range(3))
+            color = self.class_colors[class_name]
+            
+            # Draw bounding box
+            cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+            
+            # Prepare label
+            label = f"{class_name}: {score:.2f}"
+            text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+            
+            # Draw label background
+            cv2.rectangle(image, (x1, y1 - text_size[1] - 4), (x1 + text_size[0], y1), color, -1)
+            
+            # Draw label text
+            cv2.putText(image, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        return image
+
+    # Keep the visualize_detection method for debugging if needed
     def visualize_detection(self, image, outputs):
         v = Visualizer(image[:, :, ::-1], self.metadata, scale=1.2)
         out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
         return np.array(out.get_image()[:, :, ::-1])
-
-    def draw_detection_borders(self, image, outputs):
-        for box in outputs["instances"].pred_boxes.tensor.cpu().numpy():
-            x1, y1, x2, y2 = map(int, box)
-            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        return image
 
 class EnhancedCommentaryAssistant:
     def __init__(self, model, time_interval=5, frame_update_callback=None):
