@@ -1,5 +1,6 @@
 import base64
 from threading import Lock, Thread, Event
+import os
 import time
 from datetime import datetime, timedelta
 import locale
@@ -29,6 +30,12 @@ from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog
+
+# Define the captured_frames directory
+captured_frames_dir = "captured_frames"
+
+# Ensure the directory exists
+os.makedirs(captured_frames_dir, exist_ok=True)
 
 # Initialize WordPress publisher
 wp_publisher = WordPressPublisher(
@@ -532,8 +539,10 @@ try:
             
             # Save the frame with detection and subtitles
             frame_with_subtitle = add_subtitle_to_frame(frame_with_detection, commentary)
-            image_path = f"captured_frame_{int(time.time())}.jpg"
+            image_filename = f"captured_frame_{int(time.time())}.jpg"
+            image_path = os.path.join(captured_frames_dir, image_filename)
             cv2.imwrite(image_path, frame_with_subtitle)
+            print(f"Image saved to: {image_path}")
             
             # Create WordPress post
             post_title = f"CCTV Fun: {capture_time.strftime('%Y-%m-%d %H:%M:%S')}"
