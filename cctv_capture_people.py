@@ -9,6 +9,8 @@ from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog
+import logging
+from logging.handlers import RotatingFileHandler
 
 # Define the captured_frames directory
 captured_frames_dir = "captured_frames"
@@ -20,6 +22,47 @@ PERSON_PERSISTENCE = 3  # Require person to be in 3 consecutive frames
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 960
 
+# Set up logging
+def setup_logger():
+    # Get the current date and time
+    now = datetime.now()
+    current_date_formatted = now.strftime('%Y-%m-%d')
+    current_time_formatted = now.strftime('%H-%M-%S')
+
+    # Get the script's filename (without extension)
+    script_name = os.path.splitext(os.path.basename(__file__))[0]
+
+    # Create the LogFiles folder if it doesn't already exist
+    if not os.path.exists('LogFiles'):
+        os.makedirs('LogFiles')
+
+    # Use the script's filename and the current date to create the log filename
+    log_filename = f'LogFiles/{script_name}-{current_date_formatted}-{current_time_formatted}.log'
+
+    logger = logging.getLogger('cctv_capture')
+    logger.setLevel(logging.DEBUG)
+    
+    # Create a rotating file handler
+    file_handler = RotatingFileHandler(log_filename, maxBytes=1024*1024, backupCount=5)
+    file_handler.setLevel(logging.DEBUG)
+    
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # Create a formatter
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Add the handlers to the logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+logger = setup_logger()
+
 class WebcamStream:
     def __init__(self):
         self.stream = cv2.VideoCapture(0)
@@ -29,25 +72,32 @@ class WebcamStream:
     def start(self):
         self.running = True
         self.frame = self.read()
+        logger.info("Webcam stream started")
         return self
 
     def read(self):
         ret, frame = self.stream.read()
+        if not ret:
+            logger.warning("Failed to read frame from webcam")
         return frame if ret else None
 
     def stop(self):
         self.running = False
         self.stream.release()
+        logger.info("Webcam stream stopped")
 
 class ObjectDetector:
     def __init__(self):
+        logger.info("Initializing ObjectDetector")
         cfg = get_cfg()
         cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5
         cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
         cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Using device: {cfg.MODEL.DEVICE}")
         self.predictor = DefaultPredictor(cfg)
         self.metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
+        logger.info("ObjectDetector initialized")
 
     def detect_objects(self, image):
         return self.predictor(image)
@@ -60,8 +110,10 @@ class ObjectDetector:
 def create_window():
     cv2.namedWindow("CCTV Feed with Object Detection", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("CCTV Feed with Object Detection", WINDOW_WIDTH, WINDOW_HEIGHT)
+    logger.info("Display window created")
 
 def main():
+    logger.info("Starting CCTV Capture People script")
     webcam_stream = WebcamStream().start()
     object_detector = ObjectDetector()
     create_window()
@@ -79,6 +131,7 @@ def main():
 
             frame = webcam_stream.read()
             if frame is None:
+                logger.warning("Failed to read frame, skipping")
                 continue
 
             outputs = object_detector.detect_objects(frame)
@@ -92,6 +145,7 @@ def main():
                     # Start a new interaction if not already started
                     if not interaction_start_time:
                         interaction_start_time = datetime.now()
+                        logger.info("New interaction started")
                     
                     # Add frame to current interaction
                     current_interaction.append(frame_with_detection)
@@ -101,7 +155,7 @@ def main():
                     image_filename = f"person_detected_{timestamp}.jpg"
                     image_path = os.path.join(captured_frames_dir, image_filename)
                     cv2.imwrite(image_path, frame_with_detection)
-                    print(f"Person detected! Image saved to: {image_path}")
+                    logger.info(f"Person detected! Image saved to: {image_path}")
             else:
                 person_detected_count = 0
                 
@@ -109,7 +163,7 @@ def main():
                 if current_interaction:
                     interaction_end_time = datetime.now()
                     interaction_duration = (interaction_end_time - interaction_start_time).total_seconds()
-                    print(f"Interaction ended. Duration: {interaction_duration:.2f} seconds. Frames captured: {len(current_interaction)}")
+                    logger.info(f"Interaction ended. Duration: {interaction_duration:.2f} seconds. Frames captured: {len(current_interaction)}")
                     
                     # Here you could add logic to save the interaction as a group or create a GIF
                     # For now, we'll just clear the current interaction
@@ -121,13 +175,17 @@ def main():
             cv2.imshow("CCTV Feed with Object Detection", display_frame)
 
             if cv2.waitKey(1) in [27, ord("q")]:
+                logger.info("User requested to quit")
                 break
 
     except KeyboardInterrupt:
-        print("Script interrupted by user")
+        logger.info("Script interrupted by user")
+    except Exception as e:
+        logger.error(f"An error occurred: {str(e)}", exc_info=True)
     finally:
         webcam_stream.stop()
         cv2.destroyAllWindows()
+        logger.info("CCTV Capture People script ended")
 
 if __name__ == "__main__":
     main()
