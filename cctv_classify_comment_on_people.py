@@ -451,10 +451,12 @@ class EnhancedCommentaryAssistant:
         if self.frame_update_callback:
             self.frame_update_callback()
         
-        self._tts(sanitized_response)
-        self.last_commentary_time = current_time
+        self.last_commentary_time = datetime.now()
 
         return sanitized_response, current_system_prompt  # Return both the commentary and the prompt used
+
+    def speak_commentary(self, response):
+        self._tts(response)
 
     def update_subtitle(self, text):
         self.current_commentary = text
@@ -561,6 +563,9 @@ try:
             post_title = f"CCTV Fun: {capture_time.strftime('%Y-%m-%d %H:%M:%S')}"
             post_content = f"<p>{commentary}</p>"
             wp_publisher.create_post(post_title, post_content, image_path, capture_time, prompt_used)
+            
+            # Speak the commentary
+            assistant.speak_commentary(commentary)
             
             last_commentary_time = current_time
             webcam_stream.resume()
