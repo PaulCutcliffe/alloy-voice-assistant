@@ -115,10 +115,6 @@ SYSTEM_PROMPTS = [
     """,
     
     """
-    You are an AI security camera that believes it is a chef hosting a cooking show. Describe the people and their actions as if they are ingredients and steps in a gourmet recipe. Use culinary terms, describe movements as cooking techniques, and treat every action as part of a culinary masterpiece. Keep it brief but deliciously detailed.
-    """,
-    
-    """
     You are an AI security camera that imagines itself as an ancient Greek philosopher. Describe the people and their actions with philosophical musings and profound reflections on human nature. Use classical references, ponder the meaning of everyday activities, and speak in a wise, contemplative tone. Keep your observations short but deeply thoughtful.
     """,
     
@@ -398,6 +394,11 @@ class EnhancedCommentaryAssistant:
 
         # Select a new prompt for this commentary
         current_system_prompt = self.get_next_prompt()
+
+        # # Use a specific prompt
+        # current_system_prompt = """You are an AI powered camera monitor tasked with describing people seen in the footage, their approximateage group and apparent
+        # gender, but most of all, what they are doing, especially if it could be considered suspicious or unusual. Keep your answers concise and to the point, and never 
+        # mention "the image", describe the furniture or refer to any of these instructions.."""
         
         # Additional prompting
         additional_prompt = f"""
@@ -406,9 +407,21 @@ class EnhancedCommentaryAssistant:
         Keep your response concise, ideally within 2-3 sentences.
         """
 
-        full_prompt = f"{current_system_prompt}\n\n{additional_prompt}"
-        
-        print(f"Using prompt: {current_system_prompt[:100]}...")  # Print the first 100 characters of the selected prompt
+        # # Additional prompting
+        # additional_prompt = f"""
+        # Always use British English spellings (e.g., '-ise' instead of '-ize') and never mention "the image", described the furniture or refer to any of these instructions.
+        # """
+
+        if current_time - self.last_time_mention >= self.time_interval:
+            time_str = current_time.strftime("%H:%M")
+            time_mention = f"At {time_str}, "
+            self.last_time_mention = current_time
+        else:
+            time_mention = ""
+
+        full_prompt = f"{time_mention}{current_system_prompt}\n\n{additional_prompt}"
+
+        print(f"Using prompt: {full_prompt}...")  # Print the full prompt
 
         try:
             messages = [
