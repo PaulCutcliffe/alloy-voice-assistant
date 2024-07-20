@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 import logging
 from logging.handlers import RotatingFileHandler
 from PIL import Image
-import imageio
+# import imageio
 from wordpress_publisher import WordPressPublisher
 from config import WP_SITE_URL, WP_USERNAME, WP_APP_PASSWORD
 import base64

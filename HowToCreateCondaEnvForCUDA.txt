@@ -1,0 +1,5 @@
+conda create -n cctv_gpu python=3.9
+conda activate cctv_gpu
+conda install pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
+pip install -e ./detectron2
+pip install langchain langchain-community openai python-dotenv opencv-python
