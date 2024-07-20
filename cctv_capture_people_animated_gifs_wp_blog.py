@@ -118,10 +118,25 @@ class ObjectDetector:
         out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
         return out.get_image()[:, :, ::-1]
 
-def create_gif(frames, output_path, duration=0.5):
-    """Create a GIF from a list of frames."""
+def create_gif(frames, output_path, frame_duration=0.5, pause_duration=0.5):
+    """
+    Create a GIF from a list of frames with a pause at the end of each loop.
+    
+    :param frames: List of frames (numpy arrays)
+    :param output_path: Path to save the GIF
+    :param frame_duration: Duration for each frame in seconds
+    :param pause_duration: Duration of the pause at the end in seconds
+    """
     images = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in frames]
-    imageio.mimsave(output_path, images, duration=duration)
+    
+    # Duplicate the last frame
+    images.append(images[-1])
+    
+    # Create a list of durations, with the last frame having a longer duration
+    durations = [frame_duration] * (len(images) - 1) + [pause_duration]
+    
+    # Save the GIF
+    imageio.mimsave(output_path, images, duration=durations, loop=0)  # loop=0 means loop forever
     logger.info(f"GIF created and saved to: {output_path}")
 
 def create_window():
@@ -182,7 +197,7 @@ def main():
                     # Create and save GIF
                     gif_filename = f"interaction_{int(time.time())}.gif"
                     gif_path = os.path.join(interactions_dir, gif_filename)
-                    create_gif(current_interaction, gif_path)
+                    create_gif(current_interaction, gif_path, frame_duration=0.5, pause_duration=0.5)
                     
                     # Post to WordPress
                     post_title = f"Interaction Detected - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
