@@ -118,27 +118,32 @@ class ObjectDetector:
         out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
         return out.get_image()[:, :, ::-1]
 
-def create_gif(frames, output_path, frame_duration=0.5, pause_duration=0.5):
+def create_gif(frames, output_path, fps=2, final_pause=1):
     """
     Create a GIF from a list of frames with a pause at the end of each loop.
     
     :param frames: List of frames (numpy arrays)
     :param output_path: Path to save the GIF
-    :param frame_duration: Duration for each frame in seconds
-    :param pause_duration: Duration of the pause at the end in seconds
+    :param fps: Frames per second for the animation
+    :param final_pause: Number of frames to pause at the end
     """
     images = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in frames]
     
-    # Duplicate the last frame
-    images.append(images[-1])
+    # Add pause frames at the end
+    images.extend([images[-1]] * final_pause)
     
-    # Create a list of durations, with the last frame having a longer duration
-    durations = [frame_duration] * (len(images) - 1) + [pause_duration]
+    # Calculate duration in milliseconds
+    duration = int(1000 / fps)
     
     # Save the GIF
-    imageio.mimsave(output_path, images, duration=durations, loop=0)  # loop=0 means loop forever
-    # log the path and file size (in KB and with thousand separators) of the saved GIF
-    logger.info(f"GIF created and saved to: {output_path} ({os.path.getsize(output_path) / 1024:,.0f} KB)")
+    images[0].save(
+        output_path,
+        save_all=True,
+        append_images=images[1:],
+        duration=duration,
+        loop=0
+    )
+    logger.info(f"GIF created and saved to: {output_path} with fps: {fps} ({os.path.getsize(output_path) / 1024:,.0f} KB)")
 
 def create_window():
     cv2.namedWindow("CCTV Feed with Object Detection", cv2.WINDOW_NORMAL)
@@ -198,7 +203,7 @@ def main():
                     # Create and save GIF
                     gif_filename = f"interaction_{int(time.time())}.gif"
                     gif_path = os.path.join(interactions_dir, gif_filename)
-                    create_gif(current_interaction, gif_path, frame_duration=0.5, pause_duration=0.5)
+                    create_gif(current_interaction, gif_path, fps=8, final_pause=4)
                     
                     # Post to WordPress
                     post_title = f"Interaction Detected - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
