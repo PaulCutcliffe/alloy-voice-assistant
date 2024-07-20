@@ -207,7 +207,7 @@ def get_gpt4_commentary(gif_path):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4-vision-preview",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
