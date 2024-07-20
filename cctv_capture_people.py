@@ -17,7 +17,7 @@ captured_frames_dir = "captured_frames"
 os.makedirs(captured_frames_dir, exist_ok=True)
 
 # Constants
-FRAME_SKIP = 5  # Process every 5th frame
+FRAME_SKIP = 1  # Process every 5th frame
 PERSON_PERSISTENCE = 3  # Require person to be in 3 consecutive frames
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 960
@@ -122,6 +122,8 @@ def main():
     person_detected_count = 0
     current_interaction = []
     interaction_start_time = None
+    last_detection_time = 0
+    detection_display_duration = 1.0  # Display detection for 1 second
 
     try:
         while webcam_stream.running:
@@ -134,6 +136,7 @@ def main():
                 logger.warning("Failed to read frame, skipping")
                 continue
 
+            current_time = time.time()
             outputs = object_detector.detect_objects(frame)
             detected_objects = outputs["instances"].pred_classes.tolist()
 
@@ -141,6 +144,7 @@ def main():
                 person_detected_count += 1
                 if person_detected_count >= PERSON_PERSISTENCE:
                     frame_with_detection = object_detector.draw_detection_borders(frame, outputs)
+                    last_detection_time = current_time
                     
                     # Start a new interaction if not already started
                     if not interaction_start_time:
@@ -151,7 +155,7 @@ def main():
                     current_interaction.append(frame_with_detection)
                     
                     # Save the frame
-                    timestamp = int(time.time())
+                    timestamp = int(current_time)
                     image_filename = f"person_detected_{timestamp}.jpg"
                     image_path = os.path.join(captured_frames_dir, image_filename)
                     cv2.imwrite(image_path, frame_with_detection)
@@ -170,8 +174,13 @@ def main():
                     current_interaction = []
                     interaction_start_time = None
 
+            # Determine which frame to display
+            if current_time - last_detection_time < detection_display_duration and 'frame_with_detection' in locals():
+                display_frame = frame_with_detection
+            else:
+                display_frame = frame
+
             # Display the frame
-            display_frame = frame_with_detection if 'frame_with_detection' in locals() else frame
             cv2.imshow("CCTV Feed with Object Detection", display_frame)
 
             if cv2.waitKey(1) in [27, ord("q")]:
