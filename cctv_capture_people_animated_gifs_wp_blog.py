@@ -137,7 +137,8 @@ def create_gif(frames, output_path, frame_duration=0.5, pause_duration=0.5):
     
     # Save the GIF
     imageio.mimsave(output_path, images, duration=durations, loop=0)  # loop=0 means loop forever
-    logger.info(f"GIF created and saved to: {output_path}")
+    # log the path and file size (in KB and with thousand separators) of the saved GIF
+    logger.info(f"GIF created and saved to: {output_path} ({os.path.getsize(output_path) / 1024:,.0f} KB)")
 
 def create_window():
     cv2.namedWindow("CCTV Feed with Object Detection", cv2.WINDOW_NORMAL)
