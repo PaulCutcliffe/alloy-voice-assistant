@@ -313,7 +313,7 @@ def main():
                     # Create and save GIF
                     gif_filename = f"interaction_{int(time.time())}.gif"
                     gif_path = os.path.join(interactions_dir, gif_filename)
-                    create_gif(current_interaction, gif_path, fps=2, final_pause=2)
+                    create_gif(current_interaction, gif_path, fps=8, final_pause=4)
                     
                     # Generate commentary using GPT-4-vision
                     commentary = get_gpt4_commentary(gif_path)
