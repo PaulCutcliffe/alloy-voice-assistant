@@ -216,16 +216,16 @@ def get_gpt4_commentary(gif_path):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Describe what's happening in this GIF."},
+                        {"type": "text", "text": "Describe what the people are doing in this animation. Ignore the object detection boxes, labels and likelihoods."},
                         {"type": "image_url", "image_url": {"url": f"data:image/gif;base64,{encoded_gif}"}}
                     ]
                 }
             ],
             max_tokens=300
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content, system_prompt
     except Exception as e:
-        logger.error(f"Error generating GPT-4 commentary: {str(e)}")
+        logger.error(f"Error generating AI commentary: {str(e)}")
         return "Unable to generate commentary at this time."
 
 def create_gif(frames, output_path, fps=2, final_pause=1):
@@ -316,11 +316,11 @@ def main():
                     create_gif(current_interaction, gif_path, fps=8, final_pause=4)
                     
                     # Generate commentary using GPT-4-vision
-                    commentary = get_gpt4_commentary(gif_path)
+                    commentary, prompt_used = get_gpt4_commentary(gif_path)
                     
                     # Post to WordPress
                     post_title = f"Interaction Detected - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                    post_content = f"An interaction was detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}"
+                    post_content = f"An interaction was detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
                     wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
                     
                     # Clear the current interaction

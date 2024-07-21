@@ -453,7 +453,7 @@ class EnhancedCommentaryAssistant:
         
         self.last_commentary_time = datetime.now()
 
-        return sanitized_response, current_system_prompt  # Return both the commentary and the prompt used
+        return sanitized_response, full_prompt  # Return both the commentary and the prompt used
 
     def speak_commentary(self, response):
         self._tts(response)
