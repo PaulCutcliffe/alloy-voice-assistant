@@ -110,6 +110,9 @@ SYSTEM_PROMPTS = [
     """
 ]
 
+# Get the script's filename (without extension)
+script_name = os.path.splitext(os.path.basename(__file__))[0]
+
 client = OpenAI()
 
 # Set up logging
@@ -119,8 +122,6 @@ def setup_logger():
     current_date_formatted = now.strftime('%Y-%m-%d')
     current_time_formatted = now.strftime('%H-%M-%S')
 
-    # Get the script's filename (without extension)
-    script_name = os.path.splitext(os.path.basename(__file__))[0]
 
     # Create the LogFiles folder if it doesn't already exist
     if not os.path.exists('LogFiles'):
@@ -239,6 +240,10 @@ def create_gif(frames, output_path, fps=8, final_pause=4, max_size_mb=20):
     :param max_size_mb: Maximum size of the GIF in MB
     :return: Tuple of (file_size_kb, frames_used)
     """
+    if len(frames) == 0:
+        logger.warning(f"No frames provided to create GIF: {output_path}")
+        return 0, 0
+
     images = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in frames]
     
     # Add pause frames at the end
@@ -246,33 +251,37 @@ def create_gif(frames, output_path, fps=8, final_pause=4, max_size_mb=20):
     
     duration = int(1000 / fps)
     frames_used = len(images)
+    file_size_kb = 0
 
-    max_iterations = 1000
-    iteration = 0
-    while frames_used > 10 and iteration < max_iterations:
-        # Save the GIF
-        images[0].save(
-            output_path,
-            save_all=True,
-            append_images=images[1:frames_used],
-            duration=duration,
-            loop=0
-        )
-        iteration += 1
+    while frames_used > 1:  # Ensure we always have at least 1 frame
+        try:
+            # Save the GIF
+            images[0].save(
+                output_path,
+                save_all=True,
+                append_images=images[1:frames_used],
+                duration=duration,
+                loop=0
+            )
+            
+            # Check file size
+            file_size_kb = os.path.getsize(output_path) / 1024
+            if file_size_kb <= max_size_mb * 1024:
+                break
+            
+            # Remove the last frame (excluding pause frames)
+            frames_used -= 1
+        except Exception as e:
+            logger.error(f"Error creating GIF: {str(e)}")
+            return 0, 0
 
-        if iteration == max_iterations:
-            logger.warning(f"Reached maximum iterations when creating GIF: {output_path}")
-        
-        # Check file size
-        file_size_kb = os.path.getsize(output_path) / 1024
-        if file_size_kb <= max_size_mb * 1024:
-            break
-        
-        # Remove the last frame (excluding pause frames)
-        frames_used -= 1
-    
-    logger.info(f"GIF created and saved to: {output_path} with fps: {fps}, frames: {frames_used-final_pause}, final pause: {final_pause} frames ({file_size_kb:.0f} KB)")
-    return file_size_kb, frames_used-final_pause
+    if frames_used <= 1:
+        logger.warning(f"Could not create GIF under size limit: {output_path}")
+        return 0, 0
+
+    actual_frames = frames_used - final_pause
+    logger.info(f"GIF created and saved to: {output_path} with fps: {fps}, frames: {actual_frames}, final pause: {final_pause} frames ({file_size_kb:.0f} KB)")
+    return file_size_kb, actual_frames
 
 def create_multiple_gifs(frames, base_output_path, fps=8, final_pause=4, max_size_mb=20):
     """
@@ -291,10 +300,14 @@ def create_multiple_gifs(frames, base_output_path, fps=8, final_pause=4, max_siz
 
     while start_frame < len(frames):
         gif_path = f"{base_output_path}_{gif_number}.gif"
-        _, frames_used = create_gif(frames[start_frame:], gif_path, fps, final_pause, max_size_mb)
-        gif_paths.append(gif_path)
-        start_frame += frames_used
-        gif_number += 1
+        file_size_kb, frames_used = create_gif(frames[start_frame:], gif_path, fps, final_pause, max_size_mb)
+        if file_size_kb > 0 and frames_used > 0:
+            gif_paths.append(gif_path)
+            start_frame += frames_used
+            gif_number += 1
+        else:
+            logger.warning(f"Failed to create GIF {gif_number}, skipping remaining frames")
+            break
 
     return gif_paths
 
@@ -304,7 +317,7 @@ def create_window():
     logger.info("Display window created")
 
 def main():
-    logger.info("Starting script: {script_name}.py...")
+    logger.info(f"Starting script: {script_name}.py...")
     webcam_stream = WebcamStream().start()
     object_detector = ObjectDetector()
     create_window()
@@ -356,7 +369,10 @@ def main():
                     # Create and save multiple GIFs
                     base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
                     gif_paths = create_multiple_gifs(current_interaction, base_gif_path, fps=8, final_pause=4, max_size_mb=20)
-                    
+                    if not gif_paths:
+                        logger.warning("No GIFs were created for this interaction")
+                        continue  # Skip to the next iteration of the main loop
+
                     # Generate commentary and post to WordPress for each GIF
                     for i, gif_path in enumerate(gif_paths, 1):
                         commentary, prompt_used = get_gpt4_commentary(gif_path)
