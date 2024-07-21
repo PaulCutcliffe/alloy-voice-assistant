@@ -44,6 +44,7 @@ FRAME_SKIP = 1  # Process every 5th frame
 PERSON_PERSISTENCE = 3  # Require person to be in 3 consecutive frames
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 960
+FPS = 8
 
 # Get the script's filename (without extension)
 script_name = os.path.splitext(os.path.basename(__file__))[0]
@@ -102,7 +103,7 @@ def process_interaction_worker():
             
             # Process the interaction
             base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
-            gif_paths = create_multiple_gifs(frames, base_gif_path, fps=8, final_pause=4, max_size_mb=20)
+            gif_paths = create_multiple_gifs(frames, base_gif_path, fps=FPS, final_pause=4, max_size_mb=20)
             
             if not gif_paths:
                 logger.warning("No GIFs were created for this interaction")
@@ -352,7 +353,9 @@ def main():
                     
                     # Add frame to current interaction
                     current_interaction.append(frame_with_detection)
-                    logger.debug(f"Frame added to current interaction. Total frames: {len(current_interaction)}")
+                    if len(current_interaction) % FPS == 0:
+                        logger.debug(f"{FPS} frames added to current interaction. Total frames: {len(current_interaction)}")
+
             else:
                 if person_detected_count > 0:
                     logger.debug(f"No person detected. Reset count from {person_detected_count} to 0")
