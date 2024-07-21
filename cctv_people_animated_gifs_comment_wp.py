@@ -228,32 +228,70 @@ def get_gpt4_commentary(gif_path):
         logger.error(f"Error generating AI commentary: {str(e)}")
         return "Unable to generate commentary at this time."
 
-def create_gif(frames, output_path, fps=2, final_pause=1):
+def create_gif(frames, output_path, fps=8, final_pause=4, max_size_mb=20):
     """
-    Create a GIF from a list of frames with a pause at the end of each loop.
+    Create a GIF from a list of frames with a pause at the end, ensuring the file size is under max_size_mb.
     
     :param frames: List of frames (numpy arrays)
     :param output_path: Path to save the GIF
     :param fps: Frames per second for the animation
     :param final_pause: Number of frames to pause at the end
+    :param max_size_mb: Maximum size of the GIF in MB
+    :return: Tuple of (file_size_kb, frames_used)
     """
     images = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in frames]
     
     # Add pause frames at the end
     images.extend([images[-1]] * final_pause)
     
-    # Calculate duration in milliseconds
     duration = int(1000 / fps)
+    frames_used = len(images)
+
+    while True:
+        # Save the GIF
+        images[0].save(
+            output_path,
+            save_all=True,
+            append_images=images[1:],
+            duration=duration,
+            loop=0
+        )
+        
+        # Check file size
+        file_size_kb = os.path.getsize(output_path) / 1024
+        if file_size_kb <= max_size_mb * 1024 or frames_used <= 10:  # Minimum 10 frames
+            break
+        
+        # Remove the last frame (excluding pause frames)
+        images = images[:-1]
+        frames_used -= 1
     
-    # Save the GIF
-    images[0].save(
-        output_path,
-        save_all=True,
-        append_images=images[1:],
-        duration=duration,
-        loop=0
-    )
-    logger.info(f"GIF created and saved to: {output_path} with fps: {fps}, final pause: {final_pause} frames ({os.path.getsize(output_path) / 1024:,.0f} KB)")
+    logger.info(f"GIF created and saved to: {output_path} with fps: {fps}, frames: {frames_used-final_pause}, final pause: {final_pause} frames ({file_size_kb:.0f} KB)")
+    return file_size_kb, frames_used-final_pause
+
+def create_multiple_gifs(frames, base_output_path, fps=8, final_pause=4, max_size_mb=20):
+    """
+    Create multiple GIFs from a list of frames, each under the size limit.
+    
+    :param frames: List of frames (numpy arrays)
+    :param base_output_path: Base path to save the GIFs (without extension)
+    :param fps: Frames per second for the animation
+    :param final_pause: Number of frames to pause at the end of each GIF
+    :param max_size_mb: Maximum size of each GIF in MB
+    :return: List of created GIF paths
+    """
+    gif_paths = []
+    start_frame = 0
+    gif_number = 1
+
+    while start_frame < len(frames):
+        gif_path = f"{base_output_path}_{gif_number}.gif"
+        _, frames_used = create_gif(frames[start_frame:], gif_path, fps, final_pause, max_size_mb)
+        gif_paths.append(gif_path)
+        start_frame += frames_used
+        gif_number += 1
+
+    return gif_paths
 
 def create_window():
     cv2.namedWindow("CCTV Feed with Object Detection", cv2.WINDOW_NORMAL)
@@ -304,24 +342,24 @@ def main():
             else:
                 person_detected_count = 0
                 
-               # End the current interaction if no person is detected
+                # End the current interaction if no person is detected
                 if current_interaction:
                     interaction_end_time = datetime.now()
                     interaction_duration = (interaction_end_time - interaction_start_time).total_seconds()
                     logger.info(f"Interaction ended. Duration: {interaction_duration:.2f} seconds. Frames captured: {len(current_interaction)}")
                     
-                    # Create and save GIF
-                    gif_filename = f"interaction_{int(time.time())}.gif"
-                    gif_path = os.path.join(interactions_dir, gif_filename)
-                    create_gif(current_interaction, gif_path, fps=8, final_pause=4)
+                    # Create and save multiple GIFs
+                    base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
+                    gif_paths = create_multiple_gifs(current_interaction, base_gif_path, fps=8, final_pause=4, max_size_mb=20)
                     
-                    # Generate commentary using GPT-4-vision
-                    commentary, prompt_used = get_gpt4_commentary(gif_path)
-                    
-                    # Post to WordPress
-                    post_title = f"Interaction Detected - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                    post_content = f"An interaction was detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
-                    wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
+                    # Generate commentary and post to WordPress for each GIF
+                    for i, gif_path in enumerate(gif_paths, 1):
+                        commentary, prompt_used = get_gpt4_commentary(gif_path)
+                        
+                        # Post to WordPress
+                        post_title = f"Interaction Detected (Part {i}/{len(gif_paths)}) - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                        post_content = f"Part {i} of an interaction detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
+                        wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
                     
                     # Clear the current interaction
                     current_interaction = []
