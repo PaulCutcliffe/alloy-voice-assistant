@@ -18,6 +18,8 @@ from config import WP_SITE_URL, WP_USERNAME, WP_APP_PASSWORD
 import base64
 import random
 from openai import OpenAI
+import  queue
+import threading
 
 load_dotenv()
 
