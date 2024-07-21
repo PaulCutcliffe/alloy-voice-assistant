@@ -247,23 +247,28 @@ def create_gif(frames, output_path, fps=8, final_pause=4, max_size_mb=20):
     duration = int(1000 / fps)
     frames_used = len(images)
 
-    while True:
+    max_iterations = 1000
+    iteration = 0
+    while frames_used > 10 and iteration < max_iterations:
         # Save the GIF
         images[0].save(
             output_path,
             save_all=True,
-            append_images=images[1:],
+            append_images=images[1:frames_used],
             duration=duration,
             loop=0
         )
+        iteration += 1
+
+        if iteration == max_iterations:
+            logger.warning(f"Reached maximum iterations when creating GIF: {output_path}")
         
         # Check file size
         file_size_kb = os.path.getsize(output_path) / 1024
-        if file_size_kb <= max_size_mb * 1024 or frames_used <= 10:  # Minimum 10 frames
+        if file_size_kb <= max_size_mb * 1024:
             break
         
         # Remove the last frame (excluding pause frames)
-        images = images[:-1]
         frames_used -= 1
     
     logger.info(f"GIF created and saved to: {output_path} with fps: {fps}, frames: {frames_used-final_pause}, final pause: {final_pause} frames ({file_size_kb:.0f} KB)")
@@ -299,7 +304,7 @@ def create_window():
     logger.info("Display window created")
 
 def main():
-    logger.info("Starting CCTV Capture People script")
+    logger.info("Starting script: {script_name}.py...")
     webcam_stream = WebcamStream().start()
     object_detector = ObjectDetector()
     create_window()
