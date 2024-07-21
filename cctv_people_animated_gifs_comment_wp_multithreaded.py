@@ -98,6 +98,8 @@ def process_interaction_worker():
             # Unpack the interaction data
             frames, interaction_start_time, interaction_duration = interaction_data
             
+            logger.info(f"Processing interaction from {interaction_start_time}. Frames: {len(frames)}")
+            
             # Process the interaction
             base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
             gif_paths = create_multiple_gifs(frames, base_gif_path, fps=8, final_pause=4, max_size_mb=20)
@@ -106,16 +108,21 @@ def process_interaction_worker():
                 logger.warning("No GIFs were created for this interaction")
                 continue
 
+            logger.info(f"Created {len(gif_paths)} GIFs for the interaction")
+
             # Generate commentary and post to WordPress for each GIF
             for i, gif_path in enumerate(gif_paths, 1):
+                logger.info(f"Generating commentary for GIF {i}/{len(gif_paths)}")
                 commentary, prompt_used = get_gpt4_commentary(gif_path)
                 
+                logger.info(f"Posting to WordPress: GIF {i}/{len(gif_paths)}")
                 # Post to WordPress
                 post_title = f"Interaction Detected (Part {i}/{len(gif_paths)}) - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
                 post_content = f"Part {i} of an interaction detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
                 wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
             
             logger.info(f"Processed and published interaction from {interaction_start_time}")
+            logger.info(f"Remaining interactions in queue: {interaction_queue.qsize()}")
             
         except queue.Empty:
             # No interaction in queue, continue waiting
@@ -308,6 +315,7 @@ def main():
 
     # Start the worker thread
     worker_thread = start_worker_thread()
+    logger.info("Worker thread started")
 
     frame_count = 0
     person_detected_count = 0
@@ -344,7 +352,10 @@ def main():
                     
                     # Add frame to current interaction
                     current_interaction.append(frame_with_detection)
+                    logger.debug(f"Frame added to current interaction. Total frames: {len(current_interaction)}")
             else:
+                if person_detected_count > 0:
+                    logger.debug(f"No person detected. Reset count from {person_detected_count} to 0")
                 person_detected_count = 0
                 
                 # End the current interaction if no person is detected
@@ -355,6 +366,7 @@ def main():
                     
                     # Add the interaction to the queue for processing
                     interaction_queue.put((current_interaction, interaction_start_time, interaction_duration))
+                    logger.info(f"Interaction added to queue. Current queue size: {interaction_queue.qsize()}")
                     
                     # Clear the current interaction
                     current_interaction = []
