@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 import logging
 from logging.handlers import RotatingFileHandler
 from PIL import Image
-# import imageio
 from wordpress_publisher import WordPressPublisher
 from config import WP_SITE_URL, WP_USERNAME, WP_APP_PASSWORD
 import base64
@@ -229,70 +228,64 @@ def get_gpt4_commentary(gif_path):
         logger.error(f"Error generating AI commentary: {str(e)}")
         return "Unable to generate commentary at this time."
 
+def estimate_gif_size(frames, fps, duration):
+    """
+    Estimate the size of a GIF based on a sample of frames.
+    """
+    sample_size = min(len(frames), 10)  # Use up to 10 frames for estimation
+    sample_frames = frames[:sample_size]
+    
+    temp_path = "temp_estimation.gif"
+    images = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in sample_frames]
+    images[0].save(
+        temp_path,
+        save_all=True,
+        append_images=images[1:],
+        duration=duration,
+        loop=0
+    )
+    
+    file_size = os.path.getsize(temp_path)
+    os.remove(temp_path)
+    
+    estimated_size = (file_size / sample_size) * len(frames)
+    return estimated_size
+
 def create_gif(frames, output_path, fps=8, final_pause=4, max_size_mb=20):
     """
     Create a GIF from a list of frames with a pause at the end, ensuring the file size is under max_size_mb.
-    
-    :param frames: List of frames (numpy arrays)
-    :param output_path: Path to save the GIF
-    :param fps: Frames per second for the animation
-    :param final_pause: Number of frames to pause at the end
-    :param max_size_mb: Maximum size of the GIF in MB
-    :return: Tuple of (file_size_kb, frames_used)
     """
     if len(frames) == 0:
         logger.warning(f"No frames provided to create GIF: {output_path}")
         return 0, 0
 
-    images = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in frames]
-    
-    # Add pause frames at the end
-    images.extend([images[-1]] * final_pause)
-    
     duration = int(1000 / fps)
-    frames_used = len(images)
-    file_size_kb = 0
+    estimated_size = estimate_gif_size(frames, fps, duration)
+    target_size = max_size_mb * 1024 * 1024 * 0.95  # 95% of max size to leave some margin
 
-    while frames_used > 1:  # Ensure we always have at least 1 frame
-        try:
-            # Save the GIF
-            images[0].save(
-                output_path,
-                save_all=True,
-                append_images=images[1:frames_used],
-                duration=duration,
-                loop=0
-            )
-            
-            # Check file size
-            file_size_kb = os.path.getsize(output_path) / 1024
-            if file_size_kb <= max_size_mb * 1024:
-                break
-            
-            # Remove the last frame (excluding pause frames)
-            frames_used -= 1
-        except Exception as e:
-            logger.error(f"Error creating GIF: {str(e)}")
-            return 0, 0
+    if estimated_size <= target_size:
+        frames_to_use = len(frames)
+    else:
+        frames_to_use = int((target_size / estimated_size) * len(frames))
 
-    if frames_used <= 1:
-        logger.warning(f"Could not create GIF under size limit: {output_path}")
-        return 0, 0
+    images = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in frames[:frames_to_use]]
+    images.extend([images[-1]] * final_pause)  # Add pause frames
 
-    actual_frames = frames_used - final_pause
-    logger.info(f"GIF created and saved to: {output_path} with fps: {fps}, frames: {actual_frames}, final pause: {final_pause} frames ({file_size_kb:.0f} KB)")
-    return file_size_kb, actual_frames
+    images[0].save(
+        output_path,
+        save_all=True,
+        append_images=images[1:],
+        duration=duration,
+        loop=0
+    )
+
+    file_size_kb = os.path.getsize(output_path) / 1024
+    logger.info(f"GIF created and saved to: {output_path} with fps: {fps}, frames: {frames_to_use}, final pause: {final_pause} frames ({file_size_kb:.0f} KB)")
+    return file_size_kb, frames_to_use
 
 def create_multiple_gifs(frames, base_output_path, fps=8, final_pause=4, max_size_mb=20):
     """
     Create multiple GIFs from a list of frames, each under the size limit.
-    
-    :param frames: List of frames (numpy arrays)
-    :param base_output_path: Base path to save the GIFs (without extension)
-    :param fps: Frames per second for the animation
-    :param final_pause: Number of frames to pause at the end of each GIF
-    :param max_size_mb: Maximum size of each GIF in MB
-    :return: List of created GIF paths
     """
     gif_paths = []
     start_frame = 0
@@ -369,6 +362,7 @@ def main():
                     # Create and save multiple GIFs
                     base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
                     gif_paths = create_multiple_gifs(current_interaction, base_gif_path, fps=8, final_pause=4, max_size_mb=20)
+                    
                     if not gif_paths:
                         logger.warning("No GIFs were created for this interaction")
                         continue  # Skip to the next iteration of the main loop
