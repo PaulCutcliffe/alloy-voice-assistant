@@ -267,7 +267,7 @@ def create_gif(frames, output_path, fps=8, final_pause=4, max_size_mb=20):
     )
 
     file_size_kb = os.path.getsize(output_path) / 1024
-    logger.info(f"GIF created and saved to: {output_path} with fps: {fps}, frames: {frames_to_use}, final pause: {final_pause} frames ({file_size_kb:.0f} KB)")
+    logger.info(f"GIF created and saved to: {output_path} with fps: {fps}, frames: {frames_to_use}, final pause: {final_pause} frames ({file_size_kb:,.0f} KB)")
     return file_size_kb, frames_to_use
 
 def create_multiple_gifs(frames, base_output_path, fps=8, final_pause=4, max_size_mb=20):
