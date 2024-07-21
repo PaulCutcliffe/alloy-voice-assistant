@@ -20,8 +20,13 @@ import random
 from openai import OpenAI
 import  queue
 import threading
+from typing import List
 
 load_dotenv()
+
+# Global variables
+interaction_queue = queue.Queue()
+stop_event = threading.Event()
 
 # Define the captured_frames directory
 captured_frames_dir = "captured_frames"
@@ -84,6 +89,50 @@ def setup_logger():
 
 logger = setup_logger()
 
+def process_interaction_worker():
+    while not stop_event.is_set():
+        try:
+            # Try to get an interaction from the queue
+            interaction_data = interaction_queue.get(timeout=1)
+            
+            # Unpack the interaction data
+            frames, interaction_start_time, interaction_duration = interaction_data
+            
+            # Process the interaction
+            base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
+            gif_paths = create_multiple_gifs(frames, base_gif_path, fps=8, final_pause=4, max_size_mb=20)
+            
+            if not gif_paths:
+                logger.warning("No GIFs were created for this interaction")
+                continue
+
+            # Generate commentary and post to WordPress for each GIF
+            for i, gif_path in enumerate(gif_paths, 1):
+                commentary, prompt_used = get_gpt4_commentary(gif_path)
+                
+                # Post to WordPress
+                post_title = f"Interaction Detected (Part {i}/{len(gif_paths)}) - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                post_content = f"Part {i} of an interaction detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
+                wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
+            
+            logger.info(f"Processed and published interaction from {interaction_start_time}")
+            
+        except queue.Empty:
+            # No interaction in queue, continue waiting
+            continue
+        except Exception as e:
+            logger.error(f"Error processing interaction: {str(e)}", exc_info=True)
+
+def start_worker_thread():
+    worker_thread = threading.Thread(target=process_interaction_worker)
+    worker_thread.start()
+    return worker_thread
+
+def stop_worker_thread(worker_thread):
+    stop_event.set()
+    worker_thread.join()
+    logger.info("Worker thread stopped")
+
 class WebcamStream:
     def __init__(self):
         self.stream = cv2.VideoCapture(0)
@@ -91,20 +140,27 @@ class WebcamStream:
         self.frame = None
 
     def start(self):
+        if not self.stream.isOpened():
+            logger.error("Failed to open webcam")
+            return None
         self.running = True
         self.frame = self.read()
         logger.info("Webcam stream started")
         return self
 
     def read(self):
+        if not self.running:
+            return None
         ret, frame = self.stream.read()
         if not ret:
             logger.warning("Failed to read frame from webcam")
-        return frame if ret else None
+            return None
+        return frame
 
     def stop(self):
         self.running = False
-        self.stream.release()
+        if self.stream.isOpened():
+            self.stream.release()
         logger.info("Webcam stream stopped")
 
 class ObjectDetector:
@@ -192,7 +248,7 @@ def create_gif(frames, output_path, fps=8, final_pause=4, max_size_mb=20):
 
     duration = int(1000 / fps)
     estimated_size = estimate_gif_size(frames, fps, duration)
-    target_size = max_size_mb * 1024 * 1024 * 0.95  # 95% of max size to leave some margin
+    target_size = max_size_mb * 1024 * 1024 * 0.9  # 90% of max size to leave some margin
 
     if estimated_size <= target_size:
         frames_to_use = len(frames)
@@ -243,8 +299,15 @@ def create_window():
 def main():
     logger.info(f"Starting script: {script_name}.py...")
     webcam_stream = WebcamStream().start()
+    if webcam_stream is None:
+        logger.error("Failed to start webcam stream. Exiting.")
+        return
+
     object_detector = ObjectDetector()
     create_window()
+
+    # Start the worker thread
+    worker_thread = start_worker_thread()
 
     frame_count = 0
     person_detected_count = 0
@@ -290,22 +353,8 @@ def main():
                     interaction_duration = (interaction_end_time - interaction_start_time).total_seconds()
                     logger.info(f"Interaction ended. Duration: {interaction_duration:.2f} seconds. Frames captured: {len(current_interaction)}")
                     
-                    # Create and save multiple GIFs
-                    base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
-                    gif_paths = create_multiple_gifs(current_interaction, base_gif_path, fps=8, final_pause=4, max_size_mb=20)
-                    
-                    if not gif_paths:
-                        logger.warning("No GIFs were created for this interaction")
-                        continue  # Skip to the next iteration of the main loop
-
-                    # Generate commentary and post to WordPress for each GIF
-                    for i, gif_path in enumerate(gif_paths, 1):
-                        commentary, prompt_used = get_gpt4_commentary(gif_path)
-                        
-                        # Post to WordPress
-                        post_title = f"Interaction Detected (Part {i}/{len(gif_paths)}) - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                        post_content = f"Part {i} of an interaction detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
-                        wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
+                    # Add the interaction to the queue for processing
+                    interaction_queue.put((current_interaction, interaction_start_time, interaction_duration))
                     
                     # Clear the current interaction
                     current_interaction = []
@@ -331,6 +380,7 @@ def main():
     finally:
         webcam_stream.stop()
         cv2.destroyAllWindows()
+        stop_worker_thread(worker_thread)
         logger.info("CCTV Capture People script ended")
 
 if __name__ == "__main__":
