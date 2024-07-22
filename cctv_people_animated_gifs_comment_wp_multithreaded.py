@@ -27,7 +27,7 @@ load_dotenv()
 
 # Global variables
 interaction_queue = queue.Queue()
-MAX_WORKERS = 4  # Adjust this based on your system's capabilities
+MAX_WORKERS = 7  # Adjust this based on your system's capabilities
 stop_event = threading.Event()
 
 # Define the captured_frames directory
@@ -43,7 +43,7 @@ wp_publisher = WordPressPublisher(WP_SITE_URL, WP_USERNAME, WP_APP_PASSWORD)
 
 # Constants
 FRAME_SKIP = 1  # Process every 5th frame
-PERSON_PERSISTENCE = 3  # Require person to be in 3 consecutive frames
+PERSON_PERSISTENCE = 5  # Require person to be in 3 consecutive frames
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 960
 FPS = 8
@@ -262,7 +262,7 @@ def create_gif(frames, output_path, fps=8, final_pause=4, max_size_mb=20):
 
     duration = int(1000 / fps)
     estimated_size = estimate_gif_size(frames, fps, duration)
-    target_size = max_size_mb * 1024 * 1024 * 0.9  # 90% of max size to leave some margin
+    target_size = max_size_mb * 1024 * 1024 * 0.85  # 85% of max size to leave some margin
 
     if estimated_size <= target_size:
         frames_to_use = len(frames)
