@@ -189,14 +189,36 @@ class ObjectDetector:
         self.predictor = DefaultPredictor(cfg)
         self.metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
         logger.info("ObjectDetector initialized")
+        
+        # Generate a fixed color map for all classes
+        self.color_map = self._generate_color_map()
+
+    def _generate_color_map(self):
+        np.random.seed(42)  # Set a fixed seed for reproducibility
+        return {
+            class_id: [int(c) for c in colors]
+            for class_id, colors in enumerate(np.random.randint(0, 255, size=(len(self.metadata.thing_classes), 3)))
+        }
 
     def detect_objects(self, image):
         return self.predictor(image)
 
     def draw_detection_borders(self, image, outputs):
         v = Visualizer(image[:, :, ::-1], self.metadata, scale=1.2)
-        out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
-        return out.get_image()[:, :, ::-1]
+        instances = outputs["instances"].to("cpu")
+        
+        for i in range(len(instances)):
+            class_id = instances.pred_classes[i].item()
+            color = self.color_map[class_id]
+            v.draw_box(instances.pred_boxes[i], edge_color=color)
+            v.draw_text(
+                f"{self.metadata.thing_classes[class_id]}: {instances.scores[i]:.2f}",
+                instances.pred_boxes[i].get_center(),
+                color=color,
+                horizontal_alignment="center"
+            )
+        
+        return v.output.get_image()[:, :, ::-1]
 
 def get_gpt4_commentary(gif_path):
     # Encode the GIF
