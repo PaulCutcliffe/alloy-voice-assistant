@@ -18,7 +18,8 @@ from config import WP_SITE_URL, WP_USERNAME, WP_APP_PASSWORD
 import base64
 import random
 from openai import OpenAI
-import  queue
+from concurrent.futures import ThreadPoolExecutor
+import queue
 import threading
 from typing import List
 
@@ -26,6 +27,7 @@ load_dotenv()
 
 # Global variables
 interaction_queue = queue.Queue()
+MAX_WORKERS = 4  # Adjust this based on your system's capabilities
 stop_event = threading.Event()
 
 # Define the captured_frames directory
@@ -90,49 +92,53 @@ def setup_logger():
 
 logger = setup_logger()
 
-def process_interaction_worker():
-    while not stop_event.is_set():
-        try:
-            # Try to get an interaction from the queue
-            interaction_data = interaction_queue.get(timeout=1)
-            
-            # Unpack the interaction data
-            frames, interaction_start_time, interaction_duration = interaction_data
-            
-            logger.info(f"Processing interaction from {interaction_start_time}. Frames: {len(frames)}")
-            
-            # Process the interaction
-            base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
-            gif_paths = create_multiple_gifs(frames, base_gif_path, fps=FPS, final_pause=4, max_size_mb=20)
-            
-            if not gif_paths:
-                logger.warning("No GIFs were created for this interaction")
+def process_interaction(interaction_data):
+    frames, interaction_start_time, interaction_duration = interaction_data
+    
+    logger.info(f"Processing interaction from {interaction_start_time}. Frames: {len(frames)}")
+    
+    processing_start_time = time.time()
+    
+    # Process the interaction (create GIFs, get commentary, post to WordPress)
+    base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
+    gif_paths = create_multiple_gifs(frames, base_gif_path, fps=FPS, final_pause=4, max_size_mb=20)
+
+    if not gif_paths:
+        logger.warning("No GIFs were created for this interaction")
+        return  # Use return instead of continue
+
+    logger.info(f"Created {len(gif_paths)} GIFs for the interaction")
+
+    # Generate commentary and post to WordPress for each GIF
+    for i, gif_path in enumerate(gif_paths, 1):
+        logger.info(f"Generating commentary for GIF {i}/{len(gif_paths)}")
+        commentary, prompt_used = get_gpt4_commentary(gif_path)
+        logger.info(f"Posting to WordPress: GIF {i}/{len(gif_paths)}")
+        # Post to WordPress
+        post_title = f"Interaction Detected (Part {i}/{len(gif_paths)}) - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+        post_content = f"Part {i} of an interaction detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
+        wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
+
+    processing_end_time = time.time()
+    processing_duration = processing_end_time - processing_start_time
+    
+    logger.info(f"Processed and published interaction from {interaction_start_time}")
+    logger.info(f"Processing took {processing_duration:.2f} seconds")
+    logger.info(f"Remaining interactions in queue: {interaction_queue.qsize()}")
+
+def worker_thread_function():
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        while not stop_event.is_set():
+            try:
+                interaction_data = interaction_queue.get(timeout=1)
+                executor.submit(process_interaction, interaction_data)
+            except queue.Empty:
                 continue
-
-            logger.info(f"Created {len(gif_paths)} GIFs for the interaction")
-
-            # Generate commentary and post to WordPress for each GIF
-            for i, gif_path in enumerate(gif_paths, 1):
-                logger.info(f"Generating commentary for GIF {i}/{len(gif_paths)}")
-                commentary, prompt_used = get_gpt4_commentary(gif_path)
-                
-                logger.info(f"Posting to WordPress: GIF {i}/{len(gif_paths)}")
-                # Post to WordPress
-                post_title = f"Interaction Detected (Part {i}/{len(gif_paths)}) - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                post_content = f"Part {i} of an interaction detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
-                wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
-            
-            logger.info(f"Processed and published interaction from {interaction_start_time}")
-            logger.info(f"Remaining interactions in queue: {interaction_queue.qsize()}")
-            
-        except queue.Empty:
-            # No interaction in queue, continue waiting
-            continue
-        except Exception as e:
-            logger.error(f"Error processing interaction: {str(e)}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Error in worker thread: {str(e)}", exc_info=True)
 
 def start_worker_thread():
-    worker_thread = threading.Thread(target=process_interaction_worker)
+    worker_thread = threading.Thread(target=worker_thread_function)
     worker_thread.start()
     return worker_thread
 
