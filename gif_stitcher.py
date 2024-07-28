@@ -6,6 +6,7 @@ import numpy as np
 import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
+from tqdm import tqdm
 
 def setup_logger(script_name):
     now = datetime.now()
@@ -53,26 +54,33 @@ def stitch_gifs(input_folder, output_file, remove_pause_frames=False, pause_fram
 
     total_frames = 0
 
-    for gif_file in gif_files:
-        logger.info(f"Processing GIF: {gif_file}")
-        gif = Image.open(gif_file)
-        frame_count = 0
+    # Create a progress bar for processing GIFs
+    with tqdm(total=len(gif_files), desc="Processing GIFs", unit="gif") as pbar:
+        for gif_file in gif_files:
+            logger.info(f"Processing GIF: {gif_file}")
+            gif = Image.open(gif_file)
+            frame_count = 0
 
-        for frame in range(0, gif.n_frames):
-            gif.seek(frame)
-            frame_image = gif.convert("RGB")
-            
-            if remove_pause_frames and frame >= gif.n_frames - pause_frame_count:
-                logger.debug(f"Skipping pause frame {frame} in {gif_file}")
-                continue
+            # Create a nested progress bar for frames within each GIF
+            with tqdm(total=gif.n_frames, desc=f"Frames in {os.path.basename(gif_file)}", unit="frame", leave=False) as frame_pbar:
+                for frame in range(0, gif.n_frames):
+                    gif.seek(frame)
+                    frame_image = gif.convert("RGB")
+                    
+                    if remove_pause_frames and frame >= gif.n_frames - pause_frame_count:
+                        logger.debug(f"Skipping pause frame {frame} in {gif_file}")
+                        frame_pbar.update(1)
+                        continue
 
-            frame_array = np.array(frame_image)
-            frame_array = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
-            video_writer.write(frame_array)
-            frame_count += 1
+                    frame_array = np.array(frame_image)
+                    frame_array = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
+                    video_writer.write(frame_array)
+                    frame_count += 1
+                    frame_pbar.update(1)
 
-        logger.info(f"Added {frame_count} frames from {gif_file}")
-        total_frames += frame_count
+            logger.info(f"Added {frame_count} frames from {gif_file}")
+            total_frames += frame_count
+            pbar.update(1)
 
     video_writer.release()
     logger.info(f"Video creation complete. Total frames: {total_frames}")
@@ -81,6 +89,7 @@ def stitch_gifs(input_folder, output_file, remove_pause_frames=False, pause_fram
 if __name__ == "__main__":
     input_folder = "interactions"  # Change this to your GIF folder path
     output_file = "stitched_video.mp4"
-    remove_pause_frames = True  # Set to False if you want to keep pause frames
+    remove_pause_frames = False  # Set to False if you want to keep pause frames
 
     stitch_gifs(input_folder, output_file, remove_pause_frames)
+    
