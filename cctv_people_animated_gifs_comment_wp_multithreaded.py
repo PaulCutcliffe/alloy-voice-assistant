@@ -28,6 +28,8 @@ load_dotenv()
 # Global variables
 interaction_queue = queue.Queue()
 MAX_WORKERS = 7  # Adjust this based on your system's capabilities
+active_threads = 0
+thread_lock = threading.Lock()
 stop_event = threading.Event()
 
 # Define the captured_frames directory
@@ -93,38 +95,48 @@ def setup_logger():
 logger = setup_logger()
 
 def process_interaction(interaction_data):
-    frames, interaction_start_time, interaction_duration = interaction_data
+    global active_threads
     
-    logger.info(f"Processing interaction from {interaction_start_time}. Frames: {len(frames)}")
+    with thread_lock:
+        active_threads += 1
     
-    processing_start_time = time.time()
-    
-    # Process the interaction (create GIFs, get commentary, post to WordPress)
-    base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
-    gif_paths = create_multiple_gifs(frames, base_gif_path, fps=FPS, final_pause=4, max_size_mb=20)
+    try:
+        frames, interaction_start_time, interaction_duration = interaction_data
+        
+        logger.info(f"Processing interaction from {interaction_start_time}. Frames: {len(frames)}")
+        
+        processing_start_time = time.time()
+        
+        # Process the interaction (create GIFs, get commentary, post to WordPress)
+        base_gif_path = os.path.join(interactions_dir, f"interaction_{int(time.time())}")
+        gif_paths = create_multiple_gifs(frames, base_gif_path, fps=FPS, final_pause=4, max_size_mb=20)
 
-    if not gif_paths:
-        logger.warning("No GIFs were created for this interaction")
-        return  # Use return instead of continue
+        if not gif_paths:
+            logger.warning("No GIFs were created for this interaction")
+            return
 
-    logger.info(f"Created {len(gif_paths)} GIFs for the interaction")
+        logger.info(f"Created {len(gif_paths)} GIFs for the interaction")
 
-    # Generate commentary and post to WordPress for each GIF
-    for i, gif_path in enumerate(gif_paths, 1):
-        logger.info(f"Generating commentary for GIF {i}/{len(gif_paths)}")
-        commentary, prompt_used = get_gpt4_commentary(gif_path)
-        logger.info(f"Posting to WordPress: GIF {i}/{len(gif_paths)}")
-        # Post to WordPress
-        post_title = f"Interaction Detected (Part {i}/{len(gif_paths)}) - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
-        post_content = f"Part {i} of an interaction detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
-        wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
+        # Generate commentary and post to WordPress for each GIF
+        for i, gif_path in enumerate(gif_paths, 1):
+            logger.info(f"Generating commentary for GIF {i}/{len(gif_paths)}")
+            commentary, prompt_used = get_gpt4_commentary(gif_path)
+            logger.info(f"Posting to WordPress: GIF {i}/{len(gif_paths)}")
+            # Post to WordPress
+            post_title = f"Interaction Detected (Part {i}/{len(gif_paths)}) - {interaction_start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+            post_content = f"Part {i} of an interaction detected lasting {interaction_duration:.2f} seconds.\n\nAI Commentary: {commentary}\n\nPrompt Used: {prompt_used}"
+            wp_publisher.create_post(post_title, post_content, gif_path, interaction_start_time)
 
-    processing_end_time = time.time()
-    processing_duration = processing_end_time - processing_start_time
-    
-    logger.info(f"Processed and published interaction from {interaction_start_time}")
-    logger.info(f"Processing took {processing_duration:.2f} seconds")
-    logger.info(f"Remaining interactions in queue: {interaction_queue.qsize()}")
+        processing_end_time = time.time()
+        processing_duration = processing_end_time - processing_start_time
+        
+        logger.info(f"Processed and published interaction from {interaction_start_time}")
+        logger.info(f"Processing took {processing_duration:.2f} seconds")
+    finally:
+        with thread_lock:
+            active_threads -= 1
+        
+        logger.info(f"Remaining interactions in queue: {interaction_queue.qsize()}, interactions being processed: {active_threads}")
 
 def worker_thread_function():
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -196,8 +208,8 @@ class ObjectDetector:
     def _generate_color_map(self):
         np.random.seed(42)  # Set a fixed seed for reproducibility
         return {
-            class_id: [int(c) for c in colors]
-            for class_id, colors in enumerate(np.random.randint(0, 255, size=(len(self.metadata.thing_classes), 3)))
+            class_id: np.random.rand(3).tolist()  # Generate colors in range [0, 1]
+            for class_id in range(len(self.metadata.thing_classes))
         }
 
     def detect_objects(self, image):
@@ -207,16 +219,21 @@ class ObjectDetector:
         v = Visualizer(image[:, :, ::-1], self.metadata, scale=1.2)
         instances = outputs["instances"].to("cpu")
         
-        for i in range(len(instances)):
-            class_id = instances.pred_classes[i].item()
-            color = self.color_map[class_id]
-            v.draw_box(instances.pred_boxes[i], edge_color=color)
-            v.draw_text(
-                f"{self.metadata.thing_classes[class_id]}: {instances.scores[i]:.2f}",
-                instances.pred_boxes[i].get_center(),
-                color=color,
-                horizontal_alignment="center"
-            )
+        if len(instances) > 0:
+            boxes = instances.pred_boxes.tensor.numpy()
+            classes = instances.pred_classes.numpy()
+            scores = instances.scores.numpy()
+            
+            for box, class_id, score in zip(boxes, classes, scores):
+                color = self.color_map[int(class_id)]
+                x0, y0, x1, y1 = box
+                v.draw_box((x0, y0, x1, y1), edge_color=color)
+                v.draw_text(
+                    f"{self.metadata.thing_classes[int(class_id)]}: {score:.2f}",
+                    (x0, y0),
+                    color=color,
+                    horizontal_alignment="left"
+                )
         
         return v.output.get_image()[:, :, ::-1]
 
@@ -397,7 +414,7 @@ def main():
                     
                     # Add the interaction to the queue for processing
                     interaction_queue.put((current_interaction, interaction_start_time, interaction_duration))
-                    logger.info(f"Interaction added to queue. Current queue size: {interaction_queue.qsize()}")
+                    logger.info(f"Interaction added to queue. Current queue size: {interaction_queue.qsize()}, interactions being processed: {active_threads}")
                     
                     # Clear the current interaction
                     current_interaction = []
